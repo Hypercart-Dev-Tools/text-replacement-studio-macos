@@ -1,0 +1,118 @@
+{
+  "repo_label": "Fast Key Replacement (macOS)",
+  "repo_kind": "swift-macos",
+  "_placement_mode": "portable",
+  "_portable_note": "Portable mode: the committed DB at ask_self/index/fast-key-replacement-macos.sqlite is the canonical query target (the query wrapper injects --db-path; ingest injects --db-path + --no-register). Because embedding.provider is gemini, refreshing OR querying the index still requires the Gemini key, resolved from Google Secret Manager (secret: ltvera-gemini-api-key, project: named-equator-493617-e5) by the wrapper scripts. A committed DB also ships the (partially reconstructable) embeddings of indexed source -- review before making this repo public.",
+  "db_path": "${ASK_SELF_DIR}/index/fast-key-replacement-macos.sqlite",
+  "system_instructions_path": "${ASK_SELF_DIR}/ask_self_system_instructions.json",
+  "env_file_path": "temp/ask-self-rag.env",
+  "ingest_command": "./scripts/ask-self-ingest.sh --mode all",
+  "tenancy_env_var": "FKR_MACOS_SELF_ASK_TEAM_ID",
+  "embedding": {
+    "provider": "gemini",
+    "model": "gemini-embedding-001",
+    "dim": 768,
+    "_dim_note": "gemini-embedding-001 natively outputs 3072 dims. ask-self sends outputDimensionality=dim so the API truncates. 768 is a good default (~4x smaller index). Validating the key with curl (no outputDimensionality) will show 3072 -- that does NOT mean this value is wrong. Only raise to 3072 if you need full precision; it quadruples index size and locks the DB to that dim.",
+    "requests_per_minute": 2400,
+    "tokens_per_minute": 800000
+  },
+  "shared_index": {
+    "enabled": false
+  },
+  "github": {
+    "owner": "",
+    "repo": "",
+    "default_fetch_limit": 200,
+    "token_env_vars": ["GITHUB_TOKEN"]
+  },
+  "docs": {
+    "extensions": [".md", ".markdown", ".txt"],
+    "include_patterns": [
+      "^[^/]+\\.(?:md|markdown|txt)$",
+      "^(?:fkr|references|docs)/.+\\.(?:md|markdown|txt)$",
+      "^macOS/.+\\.(?:md|markdown|txt)$"
+    ],
+    "exclude_patterns": [
+      "^\\.git/",
+      "^temp/",
+      "^\\.venv/",
+      "^\\.build/",
+      "(?:^|/)\\.build/",
+      "^build/",
+      "(?:^|/)__pycache__/",
+      "^ask_self/",
+      "(?i)^ASK_SELF\\.md$",
+      "(?i)^ARCHITECTURE-BAK\\.md$"
+    ]
+  },
+  "source": {
+    "extensions": [".swift", ".py"],
+    "include_patterns": [
+      "^macOS/Package\\.swift$",
+      "^macOS/Sources/.+\\.swift$",
+      "^macOS/Apps/.+\\.swift$",
+      "^macOS/Tests/.+\\.swift$",
+      "^scripts/.+\\.py$"
+    ],
+    "exclude_patterns": [
+      "^\\.git/",
+      "^temp/",
+      "^\\.venv/",
+      "^\\.build/",
+      "(?:^|/)\\.build/",
+      "^build/",
+      "(?:^|/)__pycache__/",
+      "^ask_self/",
+      "(?:^|/)\\.DS_Store$"
+    ]
+  },
+  "classification_rules": [
+    {
+      "pattern": "(?i)(?:^|/)changelog\\.(?:md|markdown)$",
+      "source": "changelog",
+      "priority": 5,
+      "chunker": "changelog"
+    },
+    {
+      "pattern": "(?i)(?:^|/)(?:AGENTS|ARCHITECTURE|DESIGN|CONTRIBUTING|SECURITY|README|SKILL)[^/]*\\.(?:md|markdown)$",
+      "source": "policy",
+      "priority": 5,
+      "chunker": "text"
+    },
+    {
+      "pattern": "^macOS/Tests/.+\\.swift$",
+      "source": "test",
+      "priority": 4,
+      "chunker": "swift"
+    },
+    {
+      "pattern": "^macOS/(?:Sources|Apps)/.+\\.swift$",
+      "source": "module",
+      "priority": 3,
+      "chunker": "swift"
+    },
+    {
+      "pattern": "(?:^|/)Package\\.swift$",
+      "source": "config",
+      "priority": 3,
+      "chunker": "swift"
+    },
+    {
+      "pattern": "^scripts/.+\\.py$",
+      "source": "script",
+      "priority": 2,
+      "chunker": "python"
+    },
+    {
+      "pattern": "\\.(?:md|markdown|txt)$",
+      "source": "doc",
+      "priority": 1,
+      "chunker": "text"
+    }
+  ],
+  "default_classification": {
+    "source": "doc",
+    "priority": 1,
+    "chunker": "text"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "terminal.integrated.env.osx": {
+    "GOOGLE_API_KEY_SECRET_NAME": "ltvera-gemini-api-key",
+    "GOOGLE_API_KEY_SECRET_PROJECT": "named-equator-493617-e5"
+  },
+  "terminal.integrated.env.linux": {
+    "GOOGLE_API_KEY_SECRET_NAME": "ltvera-gemini-api-key",
+    "GOOGLE_API_KEY_SECRET_PROJECT": "named-equator-493617-e5"
+  }
+}

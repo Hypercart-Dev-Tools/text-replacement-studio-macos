@@ -1,0 +1,19 @@
+# ── ask-self RAG artifacts ──────────────────────────────────────────────
+# Local/temp working indexes and env file (never committed)
+temp/rag/
+temp/ask-self-rag.env
+
+# Per-DB sidecars — never commit these in ANY mode, including alongside the
+# committed portable index under ask_self/index/
+*__embed_cache.sqlite
+*__events.jsonl
+
+# Portable mode: the committed index IS tracked — do NOT ignore
+# ask_self/index/fast-key-replacement-macos.sqlite
+
+# ── Build / OS artifacts ────────────────────────────────────────────────
+.build/
+.swiftpm/
+.DS_Store
+__pycache__/
+*.pyc
