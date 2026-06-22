@@ -2,7 +2,7 @@
 name: keyboard-replacements
 description: "Manage macOS Keyboard Settings Text Replacements through Claude Code or terminal workflows. Use when exporting Apple Text Replacements, converting native replacements to JSON, editing replacements as Markdown, converting Markdown back to JSON, generating Apple-importable plist files, linting replacements, or preparing a safer MVP workflow before building a SwiftUI UI."
 license: MIT
-compatibility: "macOS with Python 3.9+ and sqlite3. Uses read-only access to ~/Library/KeyboardServices/TextReplacements.db by default. Does not directly write Apple's private database."
+compatibility: "macOS with Python 3.9+ and sqlite3. Uses read-only access by default. Includes an experimental direct SQLite writer that requires --apply."
 metadata:
   version: '0.1.0'
   author: Noel Saw / Perplexity Computer
@@ -37,6 +37,8 @@ Default workflow is intentionally conservative:
 
 Do not directly write `~/Library/KeyboardServices/TextReplacements.db` unless the user explicitly asks for an experimental private-API workflow and accepts the risks. Apple's database schema and iCloud sync behavior are private implementation details.
 
+If the user explicitly asks for direct SQLite writes, use `json_to_apple_sqlite.py`. It defaults to dry-run and requires `--apply` to mutate the database.
+
 ## Bundled Scripts
 
 The scripts live in `scripts/`.
@@ -45,6 +47,7 @@ The scripts live in `scripts/`.
 - `json_to_md.py`: convert canonical JSON into editable Markdown.
 - `md_to_json.py`: parse editable Markdown back into canonical JSON.
 - `json_to_native.py`: convert canonical JSON into an Apple-compatible plist file.
+- `json_to_apple_sqlite.py`: experimental direct writer from canonical JSON into Apple's private SQLite database.
 - `lint_replacements.py`: validate JSON or Markdown replacements.
 - `roundtrip_check.py`: test JSON → Markdown → JSON stability.
 
@@ -104,6 +107,38 @@ python3 path/to/keyboard-replacements/scripts/json_to_native.py \
 
 Then import `TextReplacements.plist` manually through System Settings → Keyboard → Text Replacements.
 
+## Experimental Direct SQLite Write Workflow
+
+Use this only when the user explicitly wants to write directly into Apple's private database.
+
+First close System Settings and any app actively editing Text Replacements. Then run a dry-run:
+
+```bash
+python3 path/to/keyboard-replacements/scripts/json_to_apple_sqlite.py \
+  keyboard-replacements/replacements.edited.json \
+  --strategy merge
+```
+
+If the plan looks correct, apply it:
+
+```bash
+python3 path/to/keyboard-replacements/scripts/json_to_apple_sqlite.py \
+  keyboard-replacements/replacements.edited.json \
+  --strategy merge \
+  --apply
+```
+
+For an exact sync where shortcuts missing from the JSON should be deleted or soft-deleted:
+
+```bash
+python3 path/to/keyboard-replacements/scripts/json_to_apple_sqlite.py \
+  keyboard-replacements/replacements.edited.json \
+  --strategy replace \
+  --apply
+```
+
+The script creates a timestamped backup of `TextReplacements.db`, plus matching `-wal` and `-shm` files if present, before any applied write.
+
 ## Claude Code Instructions
 
 When using this skill from Claude Code:
@@ -119,6 +154,14 @@ When using this skill from Claude Code:
 9. Ask the user to manually import the plist into System Settings.
 
 Never overwrite source files without creating a timestamped backup first.
+
+If using the experimental direct SQLite writer:
+
+1. Export native state to JSON first.
+2. Keep the export as a rollback point.
+3. Run `json_to_apple_sqlite.py` without `--apply` first.
+4. Only run with `--apply` after reviewing the plan.
+5. Restart affected apps, and if needed log out or reboot to force macOS to reload replacements.
 
 ## Editing Markdown
 
@@ -151,3 +194,4 @@ The output of `json_to_native.py` is a plist compatible with Apple's Text Replac
 - If Markdown parsing fails, run `lint_replacements.py` against the Markdown file to locate malformed blocks.
 - If duplicate shortcuts exist, resolve them before plist export unless the user explicitly wants Apple to handle conflicts.
 - If iCloud sync changes entries unexpectedly, export again and compare JSON files before making another plist.
+- If direct SQLite writes do not appear immediately, quit and reopen System Settings and target apps. If changes still do not appear, log out or reboot.

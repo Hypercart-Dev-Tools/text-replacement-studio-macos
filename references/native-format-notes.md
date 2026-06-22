@@ -7,7 +7,9 @@ macOS Text Replacements have two practical external representations:
 2. Apple's documented import/export plist shape:
    an array of dictionaries with `shortcut` and `phrase` keys.
 
-This skill treats the SQLite database as read-only and emits plist as the safe "back into native format" target.
+This skill treats the SQLite database as read-only by default and emits plist as the safe "back into native format" target.
+
+The optional `json_to_apple_sqlite.py` script is the exception: it writes directly to the SQLite DB only when run with `--apply`.
 
 ## SQLite read query
 
@@ -35,3 +37,20 @@ ORDER BY ZSHORTCUT COLLATE NOCASE;
 ## Why no direct writes by default
 
 Direct database writes are risky because the schema is private, System Settings and iCloud may cache or resync values, and Apple may change the backing store. Keep direct-write experiments in a separate script only after backups and manual user confirmation.
+
+## Observed columns
+
+Public examples have shown rows with columns such as:
+
+- `Z_PK`
+- `Z_ENT`
+- `Z_OPT`
+- `ZSHORTCUT`
+- `ZPHRASE`
+- `ZWASDELETED`
+- `ZNEEDSSAVETOCLOUD`
+- `ZTIMESTAMP`
+- `ZUNIQUENAME`
+- `ZREMOTERECORDINFO`
+
+Do not assume every macOS version has exactly this schema. Always introspect with `PRAGMA table_info(ZTEXTREPLACEMENTENTRY);`.
