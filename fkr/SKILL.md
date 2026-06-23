@@ -41,7 +41,7 @@ If the user explicitly asks for direct SQLite writes, use `json_to_apple_sqlite.
 
 ## Bundled Scripts
 
-The scripts live in `scripts/`.
+The scripts live in the repository's top-level `scripts/` directory, not inside this skill's folder (`fkr/`). Invoke them with a path to that directory (the examples below use `path/to/repo/scripts/`).
 
 - `native_to_json.py`: read current macOS native text replacements from SQLite and write canonical JSON.
 - `json_to_md.py`: convert canonical JSON into editable Markdown.
@@ -50,6 +50,7 @@ The scripts live in `scripts/`.
 - `json_to_apple_sqlite.py`: experimental direct writer from canonical JSON into Apple's private SQLite database.
 - `lint_replacements.py`: validate JSON or Markdown replacements.
 - `roundtrip_check.py`: test JSON → Markdown → JSON stability.
+- `replacements_common.py`: shared helper module imported by `md_to_json.py`, `json_to_native.py`, `lint_replacements.py`, and `json_to_apple_sqlite.py`. Keep it alongside the others; those scripts fail to import without it.
 
 ## Canonical JSON Format
 
@@ -82,10 +83,10 @@ From a project directory:
 ```bash
 mkdir -p keyboard-replacements
 
-python3 path/to/keyboard-replacements/scripts/native_to_json.py \
+python3 path/to/repo/scripts/native_to_json.py \
   --output keyboard-replacements/replacements.json
 
-python3 path/to/keyboard-replacements/scripts/json_to_md.py \
+python3 path/to/repo/scripts/json_to_md.py \
   keyboard-replacements/replacements.json \
   --output keyboard-replacements/replacements.md
 ```
@@ -93,14 +94,14 @@ python3 path/to/keyboard-replacements/scripts/json_to_md.py \
 The user edits `keyboard-replacements/replacements.md`, then run:
 
 ```bash
-python3 path/to/keyboard-replacements/scripts/md_to_json.py \
+python3 path/to/repo/scripts/md_to_json.py \
   keyboard-replacements/replacements.md \
   --output keyboard-replacements/replacements.edited.json
 
-python3 path/to/keyboard-replacements/scripts/lint_replacements.py \
+python3 path/to/repo/scripts/lint_replacements.py \
   keyboard-replacements/replacements.edited.json
 
-python3 path/to/keyboard-replacements/scripts/json_to_native.py \
+python3 path/to/repo/scripts/json_to_native.py \
   keyboard-replacements/replacements.edited.json \
   --output keyboard-replacements/TextReplacements.plist
 ```
@@ -114,7 +115,7 @@ Use this only when the user explicitly wants to write directly into Apple's priv
 First close System Settings and any app actively editing Text Replacements. Then run a dry-run:
 
 ```bash
-python3 path/to/keyboard-replacements/scripts/json_to_apple_sqlite.py \
+python3 path/to/repo/scripts/json_to_apple_sqlite.py \
   keyboard-replacements/replacements.edited.json \
   --strategy merge
 ```
@@ -122,7 +123,7 @@ python3 path/to/keyboard-replacements/scripts/json_to_apple_sqlite.py \
 If the plan looks correct, apply it:
 
 ```bash
-python3 path/to/keyboard-replacements/scripts/json_to_apple_sqlite.py \
+python3 path/to/repo/scripts/json_to_apple_sqlite.py \
   keyboard-replacements/replacements.edited.json \
   --strategy merge \
   --apply
@@ -131,13 +132,13 @@ python3 path/to/keyboard-replacements/scripts/json_to_apple_sqlite.py \
 For an exact sync where shortcuts missing from the JSON should be deleted or soft-deleted:
 
 ```bash
-python3 path/to/keyboard-replacements/scripts/json_to_apple_sqlite.py \
+python3 path/to/repo/scripts/json_to_apple_sqlite.py \
   keyboard-replacements/replacements.edited.json \
   --strategy replace \
   --apply
 ```
 
-The script creates a timestamped backup of `TextReplacements.db`, plus matching `-wal` and `-shm` files if present, before any applied write.
+Before any applied write, the script creates a timestamped backup of `TextReplacements.db` using SQLite's online backup API. This is a single consolidated `.db` snapshot (a consistent point-in-time copy even if another process is mid-write) — it does not copy the live `-wal`/`-shm` sidecar files. To restore, copy that single `.db` back over the original after deleting any stale `-wal`/`-shm` files.
 
 ## Claude Code Instructions
 
