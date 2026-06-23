@@ -16,11 +16,12 @@ import collections
 import datetime as dt
 import json
 import pathlib
-import shutil
 import sqlite3
 import sys
 import time
 import uuid
+
+import replacements_common
 
 
 DEFAULT_DB = pathlib.Path("~/Library/KeyboardServices/TextReplacements.db").expanduser()
@@ -41,24 +42,8 @@ def load_items(path: pathlib.Path, include_disabled: bool) -> list[dict]:
     items = payload.get("items")
     if not isinstance(items, list):
         raise ValueError("JSON must contain an items array")
-
-    result = []
-    seen = set()
-    for item in items:
-        if not include_disabled and item.get("enabled", True) is False:
-            continue
-        shortcut = item.get("shortcut")
-        phrase = item.get("phrase")
-        if shortcut is None or str(shortcut).strip() == "":
-            raise ValueError(f"item has empty shortcut: {item!r}")
-        if phrase is None:
-            raise ValueError(f"item has missing phrase: {item!r}")
-        shortcut = str(shortcut)
-        if shortcut in seen:
-            raise ValueError(f"duplicate shortcut in input JSON: {shortcut}")
-        seen.add(shortcut)
-        result.append({"shortcut": shortcut, "phrase": str(phrase)})
-    return result
+    cleaned = replacements_common.preflight(items, include_disabled=include_disabled)
+    return [{"shortcut": item["shortcut"], "phrase": str(item["phrase"])} for item in cleaned]
 
 
 def backup_database(db_path: pathlib.Path, backup_dir: pathlib.Path) -> pathlib.Path:
@@ -66,10 +51,18 @@ def backup_database(db_path: pathlib.Path, backup_dir: pathlib.Path) -> pathlib.
     target_dir = backup_dir / f"text-replacements-backup-{now_stamp()}"
     target_dir.mkdir()
 
-    for suffix in ["", "-wal", "-shm"]:
-        source = pathlib.Path(str(db_path) + suffix)
-        if source.exists():
-            shutil.copy2(source, target_dir / source.name)
+    # SQLite online backup = a consistent point-in-time snapshot even if another process
+    # is mid-write (a raw copy of a live WAL DB can be torn). Restore by copying this
+    # single .db back over the original (delete any stale -wal/-shm first).
+    src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        dest = sqlite3.connect(str(target_dir / db_path.name))
+        try:
+            src.backup(dest)
+        finally:
+            dest.close()
+    finally:
+        src.close()
 
     return target_dir
 
@@ -80,7 +73,11 @@ def connect(db_path: pathlib.Path, readonly: bool) -> sqlite3.Connection:
     if readonly:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     else:
-        conn = sqlite3.connect(str(db_path))
+        # autocommit (isolation_level=None) so our explicit BEGIN IMMEDIATE works on every
+        # Python: the default implicit-transaction mode makes sqlite3 inject its own BEGIN
+        # before the first write, raising "cannot start a transaction within a transaction"
+        # on Python < 3.12 (common as the macOS system python3).
+        conn = sqlite3.connect(str(db_path), isolation_level=None)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -119,11 +116,21 @@ def infer_entity(rows: list[sqlite3.Row], names: set[str]) -> int | None:
     return collections.Counter(values).most_common(1)[0][0]
 
 
-def next_pk(conn: sqlite3.Connection, names: set[str]) -> int:
+def next_pk(conn: sqlite3.Connection, names: set[str], entity: int | None) -> int:
     if "Z_PK" not in names:
         raise RuntimeError("cannot insert because Z_PK column does not exist")
-    value = conn.execute(f"SELECT COALESCE(MAX(Z_PK), 0) + 1 FROM {TABLE};").fetchone()[0]
-    return int(value)
+    table_max = conn.execute(f"SELECT COALESCE(MAX(Z_PK), 0) FROM {TABLE};").fetchone()[0]
+    # Also honor Core Data's allocation high-water mark in Z_PRIMARYKEY.Z_MAX: hard-deletes
+    # can drop MAX(Z_PK) below it, and reusing a freed PK collides with the macOS sync
+    # daemon's next insert (UNIQUE constraint failure -> daemon crash / CloudKit corruption).
+    pk_max = 0
+    if entity is not None and conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='Z_PRIMARYKEY';"
+    ).fetchone():
+        row = conn.execute("SELECT Z_MAX FROM Z_PRIMARYKEY WHERE Z_ENT = ?;", (entity,)).fetchone()
+        if row and row[0] is not None:
+            pk_max = row[0]
+    return int(max(table_max, pk_max)) + 1
 
 
 def parse_default(raw):
@@ -247,12 +254,9 @@ def update_primary_key_table(conn: sqlite3.Connection, entity: int | None, max_p
 
     rows = conn.execute("PRAGMA table_info(Z_PRIMARYKEY);").fetchall()
     names = {row["name"] for row in rows}
-    if "Z_MAX" not in names:
+    if entity is None or "Z_MAX" not in names or "Z_ENT" not in names:
         return
-    if entity is not None and "Z_ENT" in names:
-        conn.execute("UPDATE Z_PRIMARYKEY SET Z_MAX = MAX(Z_MAX, ?) WHERE Z_ENT = ?;", (max_pk, entity))
-    if "Z_NAME" in names:
-        conn.execute("UPDATE Z_PRIMARYKEY SET Z_MAX = MAX(Z_MAX, ?) WHERE Z_NAME = ?;", (max_pk, TABLE))
+    conn.execute("UPDATE Z_PRIMARYKEY SET Z_MAX = MAX(Z_MAX, ?) WHERE Z_ENT = ?;", (max_pk, entity))
 
 
 def apply_changes(conn: sqlite3.Connection, columns: list[sqlite3.Row], desired: list[dict], delete_missing: bool) -> None:
@@ -260,9 +264,12 @@ def apply_changes(conn: sqlite3.Connection, columns: list[sqlite3.Row], desired:
     rows = fetch_current(conn, names)
     current = current_by_shortcut(rows)
     desired_by_shortcut = {item["shortcut"]: item for item in desired}
-    template = rows[0] if rows else None
-    entity = infer_entity(rows, names)
-    pk = next_pk(conn, names) if "Z_PK" in names else 1
+    # Entity + template metadata must come from ALL rows (incl. tombstones): after a
+    # `replace` empties the active set, only tombstones carry the correct Z_ENT/columns.
+    all_rows = conn.execute(f"SELECT * FROM {TABLE};").fetchall()
+    template = all_rows[0] if all_rows else None
+    entity = infer_entity(all_rows, names)
+    pk = next_pk(conn, names, entity) if "Z_PK" in names else 1
     max_inserted_pk = pk - 1
 
     for shortcut, item in desired_by_shortcut.items():
@@ -278,7 +285,12 @@ def apply_changes(conn: sqlite3.Connection, columns: list[sqlite3.Row], desired:
             if "ZWASDELETED" in names:
                 set_parts.append("ZWASDELETED = 0")
             params.append(shortcut)
-            conn.execute(f"UPDATE {TABLE} SET {', '.join(set_parts)} WHERE ZSHORTCUT = ?;", params)
+            # Scope to the ACTIVE row only — otherwise an edit also flips a tombstone
+            # (ZWASDELETED=1) sharing this shortcut back to active, duplicating the row.
+            where = "WHERE ZSHORTCUT = ?"
+            if "ZWASDELETED" in names:
+                where += " AND COALESCE(ZWASDELETED, 0) = 0"
+            conn.execute(f"UPDATE {TABLE} SET {', '.join(set_parts)} {where};", params)
             continue
 
         insert_names = column_names(columns)

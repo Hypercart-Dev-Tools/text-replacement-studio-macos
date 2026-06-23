@@ -89,8 +89,9 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
+        import replacements_common
         text = args.input.read_text(encoding="utf-8")
-        items = parse_markdown(text)
+        items = replacements_common.preflight(parse_markdown(text), include_disabled=True)
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

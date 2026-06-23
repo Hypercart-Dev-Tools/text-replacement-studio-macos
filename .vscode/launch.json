@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:fast-key-replacement-macos}/macOS",
+            "name": "Debug TextReplacementStudio (macOS)",
+            "target": "TextReplacementStudio",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug TextReplacementStudio (macOS)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:fast-key-replacement-macos}/macOS",
+            "name": "Release TextReplacementStudio (macOS)",
+            "target": "TextReplacementStudio",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release TextReplacementStudio (macOS)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:fast-key-replacement-macos}/macOS",
+            "name": "Debug trstudio (macOS)",
+            "target": "trstudio",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug trstudio (macOS)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:fast-key-replacement-macos}/macOS",
+            "name": "Release trstudio (macOS)",
+            "target": "trstudio",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release trstudio (macOS)"
+        }
+    ]
+}

@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyboard Replacements Editor</title>
+<style>
+  :root { --bg:#1e1e1e; --fg:#e8e8e8; --muted:#9a9a9a; --line:#3a3a3a; --accent:#4a9eff;
+          --err:#ff6b6b; --warn:#e0b000; --ok:#3fb950; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  header { position:sticky; top:0; z-index:5; display:flex; gap:12px; align-items:center;
+           padding:12px 16px; background:var(--bg); border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:15px; font-weight:600; }
+  header .count { color:var(--muted); }
+  header .spacer { flex:1; }
+  button { font:inherit; padding:6px 12px; border:1px solid var(--line); background:#2b2b2b;
+           color:var(--fg); border-radius:6px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button:hover { filter:brightness(1.15); }
+  header .sep { width:1px; height:24px; background:var(--line); margin:0 2px; }
+  header .chk { display:flex; align-items:center; gap:5px; white-space:nowrap; }
+  header select { font:inherit; padding:6px; border:1px solid var(--line); background:#2b2b2b; color:var(--fg); border-radius:6px; }
+  #push { border-color:var(--warn); }
+  #status:not(:empty) { padding:8px 16px 0; }
+  #status .msg { padding:8px 12px; margin:6px 0; border-radius:6px; white-space:pre-wrap; font-family:ui-monospace,SFMono-Regular,monospace; }
+  .ok { background:rgba(63,185,80,.15); color:var(--ok); }
+  .error { background:rgba(255,107,107,.12); color:var(--err); }
+  .warning { background:rgba(224,176,0,.12); color:var(--warn); }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { position:sticky; top:49px; background:var(--bg); color:var(--muted); font-weight:500; font-size:12px; }
+  input[type=text], textarea { width:100%; padding:5px 6px; border:1px solid var(--line);
+           border-radius:4px; background:#252525; color:var(--fg); font:inherit; }
+  textarea { min-height:34px; resize:vertical; font-family:ui-monospace,SFMono-Regular,monospace; }
+  .f-shortcut { font-family:ui-monospace,SFMono-Regular,monospace; }
+  td.del { text-align:center; }
+  td.del button { padding:4px 9px; color:var(--err); }
+  .c-sc{width:16%} .c-en{width:48px;text-align:center} .c-gr{width:11%} .c-no{width:13%} .c-dl{width:44px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Keyboard Replacements</h1>
+  <span class="count" id="count"></span>
+  <span class="spacer"></span>
+  <button id="add">+ Add</button>
+  <button id="save" class="primary">Save</button>
+  <span class="sep"></span>
+  <label class="chk" title="Dry run: show the plan, write nothing"><input type="checkbox" id="dry" checked> Test mode</label>
+  <select id="strategy" title="merge = add/update only (disabled items are left active on macOS — use replace to remove them); replace = also remove shortcuts missing from this list, incl. disabled">
+    <option value="merge">merge</option>
+    <option value="replace">replace</option>
+  </select>
+  <button id="push" title="Run json_to_apple_sqlite against the live macOS database">Push to macOS</button>
+</header>
+<div id="status"></div>
+<table>
+  <thead><tr>
+    <th class="c-sc">shortcut</th><th>phrase</th>
+    <th class="c-en">on</th><th class="c-gr">group</th><th class="c-no">notes</th><th class="c-dl"></th>
+  </tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<script>
+const rowsEl = document.getElementById('rows');
+const statusEl = document.getElementById('status');
+const countEl = document.getElementById('count');
+
+function field(tag, cls, props) {
+  const td = document.createElement('td');
+  if (cls) td.className = cls;
+  const el = document.createElement(tag);
+  el.className = 'f-' + (props.name);
+  Object.assign(el, props.attrs || {});
+  td.appendChild(el);
+  return [td, el];
+}
+
+function addRow(item = {}) {
+  const tr = document.createElement('tr');
+  tr.dataset.id = item.id || (crypto.randomUUID ? crypto.randomUUID() : 'row-' + Math.random().toString(36).slice(2));
+
+  const [scTd, sc] = field('input', 'c-sc', {name:'shortcut', attrs:{type:'text', value:item.shortcut || ''}});
+  const [phTd, ph] = field('textarea', '', {name:'phrase', attrs:{value:item.phrase || '', rows:1}});
+  const [enTd, en] = field('input', 'c-en', {name:'enabled', attrs:{type:'checkbox', checked:item.enabled !== false}});
+  const [grTd, gr] = field('input', 'c-gr', {name:'group', attrs:{type:'text', value:item.group || ''}});
+  const [noTd, no] = field('input', 'c-no', {name:'notes', attrs:{type:'text', value:item.notes || ''}});
+
+  const dlTd = document.createElement('td'); dlTd.className = 'del c-dl';
+  const dl = document.createElement('button'); dl.textContent = '✕';
+  dl.onclick = () => { tr.remove(); updateCount(); };
+  dlTd.appendChild(dl);
+
+  tr.append(scTd, phTd, enTd, grTd, noTd, dlTd);
+  rowsEl.appendChild(tr);
+}
+
+function updateCount() { countEl.textContent = rowsEl.children.length + ' replacements'; }
+
+function collect() {
+  return [...rowsEl.children].map(tr => ({
+    id: tr.dataset.id,
+    shortcut: tr.querySelector('.f-shortcut').value,
+    phrase: tr.querySelector('.f-phrase').value,
+    enabled: tr.querySelector('.f-enabled').checked,
+    group: tr.querySelector('.f-group').value.trim() || null,
+    notes: tr.querySelector('.f-notes').value.trim() || null,
+  }));
+}
+
+function showStatus(messages) {
+  statusEl.innerHTML = '';
+  for (const [sev, msg] of messages) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + sev;
+    d.textContent = sev + ': ' + msg;
+    statusEl.appendChild(d);
+  }
+}
+
+async function load() {
+  const data = await (await fetch('/api/items')).json();
+  rowsEl.innerHTML = '';
+  (data.items || []).forEach(addRow);
+  updateCount();
+}
+
+document.getElementById('add').onclick = () => { addRow(); updateCount(); window.scrollTo(0, document.body.scrollHeight); };
+
+document.getElementById('save').onclick = async () => {
+  showStatus([]);
+  const res = await fetch('/api/save', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({items: collect()}),
+  });
+  const data = await res.json();
+  if (data.ok) {
+    rowsEl.innerHTML = '';
+    data.items.forEach(addRow);
+    updateCount();
+    showStatus([['ok', `saved ${data.items.length} replacements`], ...(data.issues || [])]);
+  } else if (data.issues) {
+    showStatus(data.issues);   // errors (+warnings); edits preserved, nothing written
+  } else {
+    showStatus([['error', data.error || 'save failed']]);
+  }
+  window.scrollTo(0, 0);
+};
+
+document.getElementById('push').onclick = async () => {
+  const dry = document.getElementById('dry').checked;
+  const strategy = document.getElementById('strategy').value;
+  if (!dry && !confirm(
+      'Write to your LIVE macOS Text Replacements database?\n\n' +
+      'A timestamped backup is made first. Afterward you may need to quit/reopen ' +
+      'System Settings and affected apps (or reboot) for changes to show.')) return;
+  showStatus([['ok', dry ? 'running dry-run plan…' : 'applying to macOS…']]);
+  const res = await fetch('/api/push', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({items: collect(), dryRun: dry, strategy}),
+  });
+  const data = await res.json();
+  if (!data.ok && data.issues) { showStatus(data.issues); return; }  // preflight blocked the push
+  if (data.items) { rowsEl.innerHTML = ''; data.items.forEach(addRow); updateCount(); }
+  const good = data.returncode === 0;
+  const head = data.dryRun
+    ? `dry-run plan · strategy=${data.strategy} (nothing written)`
+    : (good ? `applied to macOS · strategy=${data.strategy}` : 'apply FAILED');
+  const msgs = [[good ? (data.dryRun ? 'warning' : 'ok') : 'error', head]];
+  if (data.output) msgs.push([data.dryRun ? 'warning' : 'ok', data.output]);
+  if (data.error) msgs.push(['error', data.error]);
+  showStatus(msgs);
+  window.scrollTo(0, 0);
+};
+
+load();
+</script>
+</body>
+</html>

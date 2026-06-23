@@ -36,15 +36,25 @@ def connect_readonly(path: pathlib.Path) -> sqlite3.Connection:
 
 
 def export_items(db_path: pathlib.Path) -> list[dict]:
-    query = "SELECT ZSHORTCUT, ZPHRASE FROM ZTEXTREPLACEMENTENTRY ORDER BY ZSHORTCUT COLLATE NOCASE;"
     with connect_readonly(db_path) as conn:
+        # Skip CloudKit tombstones; exporting them would resurrect deletes on re-apply.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(ZTEXTREPLACEMENTENTRY);")}
+        where = "WHERE COALESCE(ZWASDELETED, 0) = 0 " if "ZWASDELETED" in columns else ""
+        query = f"SELECT ZSHORTCUT, ZPHRASE FROM ZTEXTREPLACEMENTENTRY {where}ORDER BY ZSHORTCUT COLLATE NOCASE;"
         rows = conn.execute(query).fetchall()
 
     items = []
+    seen = set()
     for shortcut, phrase in rows:
         if shortcut is None or phrase is None:
             continue
         shortcut = str(shortcut)
+        # A macOS DB can carry duplicate active shortcuts (sync conflicts); emitting both
+        # produces JSON the shared preflight rejects, blocking every later edit/lint/push.
+        if shortcut in seen:
+            print(f"warning: skipping duplicate shortcut on export: {shortcut!r}", file=sys.stderr)
+            continue
+        seen.add(shortcut)
         phrase = str(phrase)
         items.append(
             {
@@ -63,7 +73,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Export macOS native Text Replacements to canonical JSON.")
     parser.add_argument("--db", type=pathlib.Path, default=DEFAULT_DB, help=f"Path to TextReplacements.db. Default: {DEFAULT_DB}")
     parser.add_argument("--output", "-o", type=pathlib.Path, required=True, help="Output JSON path.")
-    parser.add_argument("--pretty", action="store_true", default=True, help="Pretty-print JSON.")
     args = parser.parse_args()
 
     try:

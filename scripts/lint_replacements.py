@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import collections
 import importlib.util
 import json
 import pathlib
 import sys
+
+import replacements_common
 
 
 def load_md_parser():
@@ -32,35 +33,6 @@ def load_items(path: pathlib.Path) -> list[dict]:
     return items
 
 
-def lint(items: list[dict]) -> list[tuple[str, str]]:
-    issues = []
-    shortcuts = collections.defaultdict(list)
-
-    for index, item in enumerate(items, start=1):
-        shortcut = item.get("shortcut")
-        phrase = item.get("phrase")
-        label = shortcut or f"item #{index}"
-
-        if shortcut is None or str(shortcut).strip() == "":
-            issues.append(("error", f"{label}: shortcut is empty"))
-        else:
-            shortcut_text = str(shortcut)
-            shortcuts[shortcut_text].append(index)
-            if shortcut_text != shortcut_text.strip():
-                issues.append(("warning", f"{label}: shortcut has leading or trailing whitespace"))
-            if any(char.isspace() for char in shortcut_text):
-                issues.append(("warning", f"{label}: shortcut contains whitespace"))
-
-        if phrase is None or str(phrase) == "":
-            issues.append(("error", f"{label}: phrase is empty"))
-
-    for shortcut, indexes in shortcuts.items():
-        if len(indexes) > 1:
-            issues.append(("error", f"{shortcut}: duplicate shortcut at items {indexes}"))
-
-    return issues
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Lint Keyboard Replacements JSON or Markdown.")
     parser.add_argument("input", type=pathlib.Path, help="Input JSON or Markdown path.")
@@ -68,7 +40,7 @@ def main() -> int:
 
     try:
         items = load_items(args.input)
-        issues = lint(items)
+        _, issues = replacements_common.check(items)
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

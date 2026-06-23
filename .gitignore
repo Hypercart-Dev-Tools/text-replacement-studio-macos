@@ -1,7 +1,8 @@
+# ── Local scratch / personal data (never committed) ─────────────────────
+# Exported text replacements are personal data; keep the whole temp tree out.
+temp/
+
 # ── ask-self RAG artifacts ──────────────────────────────────────────────
-# Local/temp working indexes and env file (never committed)
-temp/rag/
-temp/ask-self-rag.env
 
 # Per-DB sidecars — never commit these in ANY mode, including alongside the
 # committed portable index under ask_self/index/
@@ -14,6 +15,8 @@ temp/ask-self-rag.env
 # ── Build / OS artifacts ────────────────────────────────────────────────
 .build/
 .swiftpm/
+macOS/dist/
 .DS_Store
 __pycache__/
 *.pyc
+keyboard text replacement

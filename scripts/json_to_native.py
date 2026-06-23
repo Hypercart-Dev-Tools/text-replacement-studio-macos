@@ -9,6 +9,8 @@ import pathlib
 import plistlib
 import sys
 
+import replacements_common
+
 
 def load_items(path: pathlib.Path) -> list[dict]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -19,15 +21,10 @@ def load_items(path: pathlib.Path) -> list[dict]:
 
 
 def to_apple_items(items: list[dict], include_disabled: bool) -> list[dict]:
-    apple_items = []
-    for item in items:
-        if not include_disabled and item.get("enabled", True) is False:
-            continue
-        shortcut = item.get("shortcut")
-        phrase = item.get("phrase")
-        if shortcut is None or phrase is None:
-            raise ValueError(f"item missing shortcut or phrase: {item!r}")
-        apple_items.append({"shortcut": str(shortcut), "phrase": str(phrase)})
+    apple_items = [
+        {"shortcut": item["shortcut"], "phrase": str(item["phrase"])}
+        for item in replacements_common.preflight(items, include_disabled=include_disabled)
+    ]
     apple_items.sort(key=lambda row: row["shortcut"].lower())
     return apple_items
 
