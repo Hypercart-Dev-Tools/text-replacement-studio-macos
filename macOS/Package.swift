@@ -40,7 +40,10 @@ let package = Package(
             dependencies: [
                 "TextReplacementCore"
             ],
-            path: "Apps/TextReplacementStudio"
+            path: "Apps/TextReplacementStudio",
+            resources: [
+                .process("Resources")
+            ]
         ),
         .executableTarget(
             name: "TextReplacementCLI",
