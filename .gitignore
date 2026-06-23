@@ -20,3 +20,4 @@ macOS/dist/
 __pycache__/
 *.pyc
 keyboard text replacement
+.claude/settings.json
