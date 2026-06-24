@@ -10,7 +10,23 @@ Tools for working with Apple's text-replacement data on macOS:
   the Apple SQLite store, and the native plist format.
 - **`fkr/SKILL.md`** — the skill definition.
 
-## Code Intelligence (ask-self)
+## Quick Start
+
+Prerequisites: macOS 14+ and a Swift 6 toolchain (Xcode 16+) for the app; Python 3.9+ for the scripts.
+
+```sh
+# macOS app — build, bundle, and install Text Replacement Studio to /Applications
+cd macOS && ./make-app.sh
+
+# Python scripts — export your current macOS text replacements to JSON
+python3 scripts/native_to_json.py --output replacements.json
+```
+
+## Code Intelligence (ask-self) — optional, internal teammates
+
+*Optional, and currently internal-only: querying or refreshing the index needs `gcloud`
+access to a private GCP project (see **Credentials** below). You do not need ask-self to
+build or use the tools above.*
 
 This repo is indexed with [ask-self](https://github.com/Hypercart-Dev-Tools/ask-self),
 an external, repo-grounded RAG tool. Ask grounded, citation-backed questions about
