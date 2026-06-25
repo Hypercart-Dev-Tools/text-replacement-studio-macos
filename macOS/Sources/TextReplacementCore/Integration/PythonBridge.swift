@@ -20,6 +20,7 @@ public struct PythonBridge: Sendable {
         case scriptsDirectoryNotFound
         case scriptNotFound(String)
         case launchFailed(String)
+        case pythonNotFound
 
         public var errorDescription: String? {
             switch self {
@@ -29,6 +30,11 @@ public struct PythonBridge: Sendable {
                 return "Python script not found in scripts/: \(name)"
             case .launchFailed(let message):
                 return "Failed to launch python: \(message)"
+            case .pythonNotFound:
+                return "Python 3 isn’t available. This app needs python3 to read the macOS "
+                    + "Text Replacements database. Install Apple’s Command Line Tools "
+                    + "(run “xcode-select --install” in Terminal), or set the FKR_PYTHON "
+                    + "environment variable to a python3 executable."
             }
         }
     }
@@ -69,6 +75,14 @@ public struct PythonBridge: Sendable {
             if hasScripts(url) { return url }
         }
 
+        // Packaged .app: scripts are bundled under Contents/Resources/scripts. This is what makes
+        // an install to /Applications self-contained (CWD is `/` and the exe is inside the bundle,
+        // so the walk-up below finds nothing).
+        if let resources = Bundle.main.resourceURL {
+            let bundled = resources.appendingPathComponent("scripts")
+            if hasScripts(bundled) { return bundled }
+        }
+
         var roots = [URL(fileURLWithPath: fm.currentDirectoryPath)]
         if let exe = Bundle.main.executableURL { roots.append(exe.deletingLastPathComponent()) }
         for root in roots {
@@ -83,10 +97,33 @@ public struct PythonBridge: Sendable {
             }
         }
 
-        let known = URL(fileURLWithPath: ("~/Documents/GH Repos/fast-key-replacement-macos/scripts" as NSString).expandingTildeInPath)
-        if hasScripts(known) { return known }
-
+        // No machine-specific fallback: the bundled-Resources lookup covers the packaged app and
+        // the CWD/executable walk-up covers dev runs. A hardcoded absolute path would only ever match
+        // one checkout on one machine — and worse, could silently run stale scripts from an old clone.
         throw BridgeError.scriptsDirectoryNotFound
+    }
+
+    /// Probe that a working python3 is reachable, so a missing interpreter surfaces as actionable
+    /// guidance instead of a script's exit-127 noise. Portable: it probes the *configured* interpreter
+    /// (FKR_PYTHON, else `python3` via PATH) — no hardcoded interpreter locations.
+    public func preflightPython() throws {
+        let probe = Process()
+        probe.executableURL = pythonExecutable
+        probe.arguments = pythonExecutable.lastPathComponent == "env"
+            ? ["python3", "--version"]
+            : ["--version"]
+        probe.standardOutput = FileHandle.nullDevice
+        probe.standardError = FileHandle.nullDevice
+        do {
+            try probe.run()
+            probe.waitUntilExit()
+            // env returns 127 when python3 isn't on PATH; a real interpreter returns 0.
+            if probe.terminationStatus != 0 { throw BridgeError.pythonNotFound }
+        } catch is BridgeError {
+            throw BridgeError.pythonNotFound
+        } catch {
+            throw BridgeError.pythonNotFound
+        }
     }
 
     /// Run a script in scripts/ with the given args. Output is captured via temp files (not pipes)
@@ -96,6 +133,7 @@ public struct PythonBridge: Sendable {
         guard FileManager.default.fileExists(atPath: scriptURL.path) else {
             throw BridgeError.scriptNotFound(script)
         }
+        try preflightPython()
 
         let tmp = FileManager.default.temporaryDirectory
         let outURL = tmp.appendingPathComponent("fkr-out-\(UUID().uuidString)")

@@ -52,6 +52,14 @@ done
 # Icon
 cp "$ICON_SRC" "$APP/Contents/Resources/AppIcon.icns"
 
+# Bundle the repo's Python scripts so the installed app is self-contained. PythonBridge
+# resolves these from Contents/Resources/scripts (CWD is `/` on a Finder launch, and the
+# executable lives inside the bundle, so it can't walk up to the repo).
+SCRIPTS_SRC="$PKG_DIR/../scripts"
+[ -d "$SCRIPTS_SRC" ] || { echo "✗ scripts/ not found at $SCRIPTS_SRC"; exit 1; }
+[ -f "$SCRIPTS_SRC/json_to_apple_sqlite.py" ] || { echo "✗ json_to_apple_sqlite.py missing in $SCRIPTS_SRC"; exit 1; }
+cp -R "$SCRIPTS_SRC" "$APP/Contents/Resources/scripts"
+
 # Info.plist
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
