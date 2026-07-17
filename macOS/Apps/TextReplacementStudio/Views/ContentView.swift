@@ -48,6 +48,14 @@ struct ContentView: View {
         .toolbar { toolbarContent }
         .focusedValue(\.newReplacement, newReplacement)
         .overlay(alignment: .bottom) { toastOverlay }
+        .background {
+            // Hidden button so ⌘S (the conventional macOS "save" shortcut) also
+            // triggers Apply — SwiftUI only allows one .keyboardShortcut per view.
+            Button("") { confirmApply = true }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(model.isBusy || model.replacements.isEmpty)
+                .hidden()
+        }
         .task {
             if model.replacements.isEmpty { await model.importFromMacOS() }
             if selectedReplacementID == nil { selectedReplacementID = model.replacements.first?.id }
