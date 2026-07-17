@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TextReplacementCore
 
@@ -11,6 +12,7 @@ struct ReplacementDetailEditor: View {
     private static let noneTag = "\u{0}none"   // sentinel for "Ungrouped" in the picker
 
     @FocusState private var shortcutFocused: Bool
+    @State private var copied = false
 
     var body: some View {
         if let index = model.index(of: replacementID) {
@@ -29,11 +31,17 @@ struct ReplacementDetailEditor: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.window)
-            .onChange(of: replacementID) { focusIfBlank() }
+            .onChange(of: replacementID) { focusIfBlank(); copied = false }
             .onAppear { focusIfBlank() }
         } else {
             emptyState
         }
+    }
+
+    private func copyToClipboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copied = true
     }
 
     /// Drop the cursor into the shortcut field when a freshly-added (blank) row is shown.
@@ -86,6 +94,20 @@ struct ReplacementDetailEditor: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text3)
                     .monospacedDigit()
+                Button {
+                    copyToClipboard(phrase)
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 11))
+                        .foregroundStyle(copied ? Theme.accent : Theme.text3)
+                }
+                .buttonStyle(.plain)
+                .help("Copy expanded phrase")
+                .task(id: copied) {
+                    guard copied else { return }
+                    try? await Task.sleep(for: .seconds(1.5))
+                    copied = false
+                }
             }
             TextEditor(text: stringBinding(index, \.phrase))
                 .font(.system(size: 13))
