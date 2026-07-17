@@ -1,9 +1,9 @@
 ---
 title: Claude Code CRUD for Text Replacement Studio (Skill-first)
-status: Proposed (1-INBOX — not yet active)
+status: Active (2-WORKING)
 doc_type: project
 created: 2026-06-23
-updated: 2026-06-23
+updated: 2026-07-17
 owner: noel
 goal: >
   Let Claude Code Create/Read/Update/Delete macOS text replacements with zero new
@@ -26,10 +26,11 @@ non_goals:
 
 # Claude Code CRUD for Text Replacement Studio (Skill-first)
 
-> **Lifecycle note.** Proposal in `PROJECT/1-INBOX`, so per `PROJECT/PDDA.md` it carries
-> **no `## Status` table** yet. On promotion to `PROJECT/2-WORKING/` add: the exact status
-> table, the Phase 0 QA-gate sign-off, and a one-line `ROADMAP.md` pointer. See the
-> **Promotion checklist** at the end.
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase 0 Skill shipped at `.claude/skills/text-replacements/SKILL.md` (2026-06-23, see `CHANGELOG.md`); `ROADMAP.md` pointer added. | Run the §3.4 QA gate — a scripted read → edit → lint → preview → apply cycle against a temp DB copy — and check it off. No automated verification has run against this Skill yet (per the 2026-06-23 CHANGELOG entry). Once green, move this doc to `PROJECT/3-COMPLETED/`. |
 
 ## 1. Summary
 
@@ -181,9 +182,10 @@ Phase 0 avoids entirely by working on a throwaway snapshot. Classify and design 
 
 ## 7. Promotion checklist (1-INBOX → 2-WORKING)
 
-- [ ] Move to `PROJECT/2-WORKING/MCP-CRUD-BRIDGE.md`.
-- [ ] Add the exact `## Status` table (`What was just completed | What's next`).
-- [ ] Create `ROADMAP.md` (pointer ledger) and add a one-line pointer.
-- [ ] Keep the Phase 0 QA gate; check it off when the Skill ships.
-- [ ] Add a `CHANGELOG.md` entry.
-- [ ] Run `utils/pdda-run.sh` and clear deterministic findings.
+- [x] Move to `PROJECT/2-WORKING/MCP-CRUD-BRIDGE.md`.
+- [x] Add the exact `## Status` table (`What was just completed | What's next`).
+- [x] Create `ROADMAP.md` (pointer ledger) and add a one-line pointer.
+- [ ] Keep the Phase 0 QA gate; check it off when the Skill ships. **Still open** — no automated
+      verification has run against the Skill (per the 2026-06-23 `CHANGELOG.md` entry).
+- [x] Add a `CHANGELOG.md` entry.
+- [x] Run `pdda.sh run` and clear deterministic findings.

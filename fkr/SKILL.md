@@ -43,6 +43,8 @@ If the user explicitly asks for direct SQLite writes, use `json_to_apple_sqlite.
 
 The scripts live in the repository's top-level `scripts/` directory, not inside this skill's folder (`fkr/`). Invoke them with a path to that directory (the examples below use `path/to/repo/scripts/`).
 
+Always substitute the **absolute** path to the checkout, and **quote it** — several real install locations for this repo (including the one it was authored on) contain spaces, e.g. `"~/Documents/GH Repos/fast-key-replacement-macos/scripts/native_to_json.py"`. An unquoted or CWD-relative path will fail or silently resolve to the wrong file.
+
 - `native_to_json.py`: read current macOS native text replacements from SQLite and write canonical JSON.
 - `json_to_md.py`: convert canonical JSON into editable Markdown.
 - `md_to_json.py`: parse editable Markdown back into canonical JSON.
@@ -83,10 +85,10 @@ From a project directory:
 ```bash
 mkdir -p keyboard-replacements
 
-python3 path/to/repo/scripts/native_to_json.py \
+python3 "path/to/repo/scripts/native_to_json.py" \
   --output keyboard-replacements/replacements.json
 
-python3 path/to/repo/scripts/json_to_md.py \
+python3 "path/to/repo/scripts/json_to_md.py" \
   keyboard-replacements/replacements.json \
   --output keyboard-replacements/replacements.md
 ```
@@ -94,14 +96,14 @@ python3 path/to/repo/scripts/json_to_md.py \
 The user edits `keyboard-replacements/replacements.md`, then run:
 
 ```bash
-python3 path/to/repo/scripts/md_to_json.py \
+python3 "path/to/repo/scripts/md_to_json.py" \
   keyboard-replacements/replacements.md \
   --output keyboard-replacements/replacements.edited.json
 
-python3 path/to/repo/scripts/lint_replacements.py \
+python3 "path/to/repo/scripts/lint_replacements.py" \
   keyboard-replacements/replacements.edited.json
 
-python3 path/to/repo/scripts/json_to_native.py \
+python3 "path/to/repo/scripts/json_to_native.py" \
   keyboard-replacements/replacements.edited.json \
   --output keyboard-replacements/TextReplacements.plist
 ```
@@ -115,7 +117,7 @@ Use this only when the user explicitly wants to write directly into Apple's priv
 First close System Settings and any app actively editing Text Replacements. Then run a dry-run:
 
 ```bash
-python3 path/to/repo/scripts/json_to_apple_sqlite.py \
+python3 "path/to/repo/scripts/json_to_apple_sqlite.py" \
   keyboard-replacements/replacements.edited.json \
   --strategy merge
 ```
@@ -123,7 +125,7 @@ python3 path/to/repo/scripts/json_to_apple_sqlite.py \
 If the plan looks correct, apply it:
 
 ```bash
-python3 path/to/repo/scripts/json_to_apple_sqlite.py \
+python3 "path/to/repo/scripts/json_to_apple_sqlite.py" \
   keyboard-replacements/replacements.edited.json \
   --strategy merge \
   --apply
@@ -132,7 +134,7 @@ python3 path/to/repo/scripts/json_to_apple_sqlite.py \
 For an exact sync where shortcuts missing from the JSON should be deleted or soft-deleted:
 
 ```bash
-python3 path/to/repo/scripts/json_to_apple_sqlite.py \
+python3 "path/to/repo/scripts/json_to_apple_sqlite.py" \
   keyboard-replacements/replacements.edited.json \
   --strategy replace \
   --apply

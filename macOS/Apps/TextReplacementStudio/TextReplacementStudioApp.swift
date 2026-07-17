@@ -21,6 +21,28 @@ struct TextReplacementStudioApp: App {
             CommandGroup(replacing: .newItem) {
                 NewReplacementCommand()
             }
+            CommandGroup(replacing: .appInfo) {
+                AboutCommand()
+            }
+        }
+    }
+}
+
+/// App ▸ About Text Replacement Studio. Standard panel plus the sponsor/copyright/license
+/// lines, which `NSHumanReadableCopyright` in Info.plist doesn't have room for on its own.
+private struct AboutCommand: View {
+    var body: some View {
+        Button("About Text Replacement Studio") {
+            NSApplication.shared.orderFrontStandardAboutPanel(options: [
+                .credits: NSAttributedString(
+                    string: """
+                    Text Replacement Studio | Sponsored by MacNerd.xyz
+                    © Copyright 2026 Neochrome, Inc.
+                    GPL v2 License | Use as-is
+                    """,
+                    attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)]
+                )
+            ])
         }
     }
 }

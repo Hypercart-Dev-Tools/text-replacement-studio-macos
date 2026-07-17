@@ -79,6 +79,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>NSHumanReadableCopyright</key><string>© Copyright 2026 Neochrome, Inc.</string>
 </dict>
 </plist>
 PLIST

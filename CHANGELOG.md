@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 2026-07-17
+
+- Added sort-by-date-created and alphabetical sort to the Text Replacement Studio shortcuts list (GH-1): a `ReplacementSortOrder` (manual/dateCreated/alphabetical) wired into `StudioModel.filtered(_:search:)`, with a footer sort menu that shows the active mode and keeps the selected row in view across re-sorts. Default stays `.manual` so existing insertion-order behavior is unchanged.
+- Verification: `swift build` clean; cross-model `/consult` review (Codex + agy) — no concurrency/binding issues found; confirmed the source Apple Text Replacements DB has no per-item creation-date field, so `.dateCreated` reflects true creation time only for shortcuts added in-app (accepted, not fixed — see `PROJECT/1-INBOX/GH-1-SORT-SHORTCUTS-LIST.md`).
+
 ## 2026-06-23
 
 - Added the repo-local Claude skill at `.claude/skills/text-replacements/SKILL.md` for safe macOS text-replacement CRUD via fresh JSON export, lint, dry-run preview, and explicit apply.
