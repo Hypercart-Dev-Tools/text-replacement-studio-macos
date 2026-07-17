@@ -21,3 +21,9 @@ __pycache__/
 *.pyc
 keyboard text replacement
 .claude/settings.json
+
+# Aider Studio (auto-added)
+REPO_MAP.md
+.aider/
+.xyz/
+/relay-system
