@@ -21,6 +21,8 @@ final class StudioModel {
     var toast: ToastMessage?
     /// Push strategy — Merge (add/update) or Replace (add/update/remove).
     var strategy: AppleDatabaseWriter.Strategy = .merge
+    /// How the middle list is ordered — default preserves import/insertion order.
+    var sortOrder: ReplacementSortOrder = .manual
 
     // MARK: - macOS bridge
 
@@ -123,10 +125,14 @@ final class StudioModel {
             .sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
     }
 
-    func count(for filter: ReplacementFilter) -> Int { filtered(filter, search: "").count }
+    func count(for filter: ReplacementFilter) -> Int { filteredUnsorted(filter, search: "").count }
 
-    /// Rows for the middle list: the active filter narrowed by the search query.
+    /// Rows for the middle list: the active filter narrowed by the search query, sorted by `sortOrder`.
     func filtered(_ filter: ReplacementFilter, search: String) -> [Replacement] {
+        filteredUnsorted(filter, search: search).sorted(order: sortOrder)
+    }
+
+    private func filteredUnsorted(_ filter: ReplacementFilter, search: String) -> [Replacement] {
         let base: [Replacement]
         switch filter {
         case .all:

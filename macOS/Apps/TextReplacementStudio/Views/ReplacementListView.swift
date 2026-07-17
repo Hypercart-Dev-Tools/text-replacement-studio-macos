@@ -15,6 +15,10 @@ struct ReplacementListView: View {
     private var rows: [Replacement] { model.filtered(selectedFilter, search: searchText) }
     private var disabledCount: Int { rows.filter { !$0.enabled }.count }
 
+    private var sortOrderBinding: Binding<ReplacementSortOrder> {
+        Binding(get: { model.sortOrder }, set: { model.sortOrder = $0 })
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             searchField
@@ -68,18 +72,25 @@ struct ReplacementListView: View {
         if rows.isEmpty {
             emptyState
         } else {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(rows) { r in
-                        ReplacementRow(
-                            replacement: r,
-                            isSelected: selectedReplacementID == r.id,
-                            isEnabled: enabledBinding(for: r),
-                            onSelect: { selectedReplacementID = r.id }
-                        )
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(rows) { r in
+                            ReplacementRow(
+                                replacement: r,
+                                isSelected: selectedReplacementID == r.id,
+                                isEnabled: enabledBinding(for: r),
+                                onSelect: { selectedReplacementID = r.id }
+                            )
+                            .id(r.id)
+                        }
                     }
+                    .padding(.top, 2)
                 }
-                .padding(.top, 2)
+                .onChange(of: rows.map(\.id)) {
+                    guard let id = selectedReplacementID else { return }
+                    withAnimation(Theme.spring) { proxy.scrollTo(id) }
+                }
             }
         }
     }
@@ -122,6 +133,30 @@ struct ReplacementListView: View {
                         .foregroundStyle(Theme.text2)
                 }
                 Spacer()
+                Menu {
+                    Picker("Sort", selection: sortOrderBinding) {
+                        ForEach(ReplacementSortOrder.allCases, id: \.self) { order in
+                            Text(order.label).tag(order)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 11, weight: .medium))
+                        if model.sortOrder != .manual {
+                            Text(model.sortOrder.label)
+                                .font(.system(size: 11))
+                        }
+                    }
+                    .foregroundStyle(Theme.text2)
+                    .padding(.horizontal, 7)
+                    .frame(height: 24)
+                    .background(Theme.hover, in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Sort: \(model.sortOrder.label)")
+                .accessibilityLabel("Sort replacements, currently \(model.sortOrder.label)")
                 Button(action: onAdd) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .medium))
