@@ -27,6 +27,12 @@ swift build
 > If `swift build` fails with `fatal: cannot use bare repository … (safe.bareRepository is 'explicit')`,
 > either use `./make-app.sh` (which already handles it) or prefix the command:
 > `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build`
+>
+> If instead it fails with `error: 'macos': Invalid manifest` and
+> `sandbox-exec: sandbox_apply: Operation not permitted`, that's an AI coding agent's own
+> sandbox blocking SwiftPM's manifest-compilation sandbox (SwiftPM shells out to its own
+> `sandbox-exec`, and a nested sandbox can't apply inside another one) — not a problem with
+> this package. Run the build outside the agent's sandbox.
 
 ## Run the CLI
 

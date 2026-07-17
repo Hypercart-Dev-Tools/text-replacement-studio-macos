@@ -8,7 +8,11 @@ Tools for working with Apple's text-replacement data on macOS:
   See [macOS/README.md](macOS/README.md).
 - **`scripts/`** — Python round-trip/conversion utilities between JSON, Markdown,
   the Apple SQLite store, and the native plist format.
-- **`fkr/SKILL.md`** — the skill definition.
+- **`web/`** — a tiny loopback-only local editor for the JSON (`python3 web/serve.py`).
+- **`.claude/skills/text-replacements/`** — the live, auto-loaded Claude Code skill
+  for CRUD on text replacements from a Claude Code session.
+- **`fkr/SKILL.md`** — a standalone reference for the `scripts/*.py` CLI tools,
+  for terminal use or manual driving from Claude Code (not auto-loaded — see above).
 
 ## Quick Start
 
@@ -21,6 +25,18 @@ cd macOS && ./make-app.sh
 # Python scripts — export your current macOS text replacements to JSON
 python3 scripts/native_to_json.py --output replacements.json
 ```
+
+**Verify it worked:** the app launches from `/Applications/Text Replacement Studio.app`
+and lists your current replacements; `replacements.json` contains your exported entries.
+Optionally run the test suite: `cd macOS && swift test`.
+
+**Troubleshooting:**
+- `swift build` fails with `fatal: cannot use bare repository … (safe.bareRepository is 'explicit')`
+  or a similarly cryptic manifest error — see the note in [macOS/README.md](macOS/README.md#build--develop).
+- Running under an AI coding agent, `swift build` fails with `error: 'macos': Invalid manifest`
+  and `sandbox-exec: sandbox_apply: Operation not permitted` — this is the agent's own sandbox
+  blocking SwiftPM's manifest-compilation sandbox, not a problem with the repo. The agent needs
+  to run the build outside its sandbox.
 
 ## Copyright
 

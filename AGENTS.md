@@ -14,45 +14,35 @@ text-replacement data:
 - `macOS/Tests` — XCTest suites.
 - `scripts/*.py` — JSON ⇄ Markdown ⇄ Apple SQLite ⇄ native-plist conversion + linting.
 
-## Code intelligence: query ask-self first
+## Code intelligence: ask-self, if it's set up (optional)
 
-This repo is indexed with **ask-self**, an external, repo-grounded RAG tool.
-**Before grep-spelunking or asking the user to re-explain repo context, query
-ask-self first:**
+This repo can optionally be indexed with **ask-self**, an external, repo-grounded
+RAG tool — but the index is **not** committed here, so a fresh clone doesn't have
+it. Only try this if you already have a working ask-self setup (a separate,
+unvendored checkout, plus the credentials below); otherwise skip straight to
+grep/read — don't block work on provisioning ask-self.
 
 ```sh
 ./scripts/ask-self-query.sh "your question here"
 ```
 
-**When to use it**
-- Session-start orientation in an unfamiliar area of the codebase.
-- Cross-file behavior questions ("how does the import → persist → export flow work?").
-- Pronoun-heavy references ("that codec", "the merge engine", "the linter").
+If that fails (missing checkout, missing index, no credentials), fall back to
+normal grep-spelunking — that's the default path for anyone without ask-self
+already configured, not a last resort.
 
-**When NOT to use it**
-- Trivial single-file reads.
-- Tight edit-test loops.
-- Questions about current *uncommitted* state — the index reflects the last
-  ingest, not your working tree.
-
-**Refresh the index** after meaningful changes: `./scripts/ask-self-ingest.sh`.
-
-**Staleness.** The committed portable index lags active branch work until
-re-ingested. Override the ask-self checkout location with `ASK_SELF_PATH`.
+**If you do have it working:**
+- Good for session-start orientation, cross-file behavior questions, and
+  pronoun-heavy references ("that codec", "the merge engine").
+- Not useful for trivial single-file reads, tight edit-test loops, or questions
+  about current *uncommitted* state (the index reflects the last ingest).
+- Refresh after meaningful changes: `./scripts/ask-self-ingest.sh`.
 
 ### Gemini API key (ask-self)
 
-The Gemini key lives in Google Secret Manager. The wrapper scripts default
+Provisioning ask-self requires a Gemini API key. The wrapper scripts default
 `GOOGLE_API_KEY_SECRET_NAME=ltvera-gemini-api-key` and
-`GOOGLE_API_KEY_SECRET_PROJECT=named-equator-493617-e5` automatically, so a
-`gcloud`-authenticated machine needs no extra setup. If you invoke ask-self
-outside the wrappers and `GOOGLE_API_KEY` is unset, resolve it first:
-
-```sh
-export GOOGLE_API_KEY=$(gcloud secrets versions access latest \
-  --secret=ltvera-gemini-api-key \
-  --project=named-equator-493617-e5)
-```
-
-Requires `gcloud` authenticated with an account that has
-`Secret Manager Secret Accessor` on the project.
+`GOOGLE_API_KEY_SECRET_PROJECT=named-equator-493617-e5`, resolved via Google
+Secret Manager — this needs `gcloud` authenticated with an account that has
+`Secret Manager Secret Accessor` on that specific private GCP project, which
+most contributors won't have. Outside contributors should set `GOOGLE_API_KEY`
+from their own key instead, or skip ask-self entirely.

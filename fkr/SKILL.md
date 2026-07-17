@@ -1,7 +1,7 @@
 ---
 name: keyboard-replacements
 description: "Manage macOS Keyboard Settings Text Replacements through Claude Code or terminal workflows. Use when exporting Apple Text Replacements, converting native replacements to JSON, editing replacements as Markdown, converting Markdown back to JSON, generating Apple-importable plist files, linting replacements, or preparing a safer MVP workflow before building a SwiftUI UI."
-license: MIT
+license: GPL-2.0
 compatibility: "macOS with Python 3.9+ and sqlite3. Uses read-only access by default. Includes an experimental direct SQLite writer that requires --apply."
 metadata:
   version: '0.1.0'
@@ -9,6 +9,13 @@ metadata:
 ---
 
 # Keyboard Replacements
+
+> **Not an auto-loaded Claude Code skill.** This file lives at `fkr/`, outside
+> `.claude/skills/`, so Claude Code never discovers it automatically — it's a
+> standalone reference for driving the `scripts/*.py` CLI tools directly, by hand
+> or from any terminal workflow. For the live, auto-activating in-session Claude
+> Code skill (a different, `.tmp`-snapshot-based workflow for the same task), see
+> [`.claude/skills/text-replacements/SKILL.md`](../.claude/skills/text-replacements/SKILL.md).
 
 ## When to Use This Skill
 
@@ -170,7 +177,7 @@ If using the experimental direct SQLite writer:
 
 Each replacement appears as an `## Replacement` block:
 
-```markdown
+````markdown
 ## Replacement
 
 - id: `abc123`
@@ -183,7 +190,7 @@ Each replacement appears as an `## Replacement` block:
 Noel Saw
 Neochrome
 ```
-```
+````
 
 The phrase is the text inside the fenced `text` block. Preserve the fences. If a replacement phrase needs backticks, use longer fences manually and verify with `md_to_json.py`.
 
