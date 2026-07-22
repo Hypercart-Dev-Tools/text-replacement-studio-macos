@@ -11,6 +11,17 @@ extension FocusedValues {
     }
 }
 
+/// Exposes ContentView's "apply" action to the menu bar so File ▸ Apply to macOS (⌘S)
+/// drives the same confirmation path as the toolbar button. Published as nil while the
+/// action isn't available, which is what greys the menu item out.
+struct ApplyToMacOSKey: FocusedValueKey { typealias Value = () -> Void }
+extension FocusedValues {
+    var applyToMacOS: (() -> Void)? {
+        get { self[ApplyToMacOSKey.self] }
+        set { self[ApplyToMacOSKey.self] = newValue }
+    }
+}
+
 struct ContentView: View {
     @State private var model = StudioModel()
     @State private var searchText = ""
@@ -22,6 +33,10 @@ struct ContentView: View {
     private var strategyBinding: Binding<AppleDatabaseWriter.Strategy> {
         Binding(get: { model.strategy }, set: { model.strategy = $0 })
     }
+
+    /// Whether Apply is currently available — shared by the toolbar button and the
+    /// File ▸ Apply to macOS menu item so the two can't disagree.
+    private var canApply: Bool { !model.isBusy && !model.replacements.isEmpty }
 
     var body: some View {
         NavigationSplitView {
@@ -47,15 +62,8 @@ struct ContentView: View {
         .tint(Theme.accent)
         .toolbar { toolbarContent }
         .focusedValue(\.newReplacement, newReplacement)
+        .focusedValue(\.applyToMacOS, canApply ? { confirmApply = true } : nil)
         .overlay(alignment: .bottom) { toastOverlay }
-        .background {
-            // Hidden button so ⌘S (the conventional macOS "save" shortcut) also
-            // triggers Apply — SwiftUI only allows one .keyboardShortcut per view.
-            Button("") { confirmApply = true }
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(model.isBusy || model.replacements.isEmpty)
-                .hidden()
-        }
         .task {
             if model.replacements.isEmpty { await model.importFromMacOS() }
             if selectedReplacementID == nil { selectedReplacementID = model.replacements.first?.id }
@@ -115,7 +123,7 @@ struct ContentView: View {
             Button("Apply to macOS…") { confirmApply = true }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(model.isBusy || model.replacements.isEmpty)
+                .disabled(!canApply)
                 .help("Write your edits to the live macOS database (backup made first).")
         }
     }

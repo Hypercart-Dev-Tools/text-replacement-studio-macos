@@ -4,6 +4,11 @@
 
 - Normalized the Text Replacement Studio app icon's optical size: preserved the artwork while scaling its source canvas to 938px and centering it, so the visible icon fits within an 824px maximum footprint and no longer appears oversized beside neighboring macOS icons.
 
+## 2026-07-19
+
+- Promoted ⌘S (Apply to macOS) from a hidden background button to a real File menu item, so the shortcut is discoverable and works when the main window isn't the only focused surface. Replaces the `.saveItem` command group and drives the same confirmation dialog as the toolbar button via a new `applyToMacOS` focused value; a shared `canApply` predicate keeps the menu item and toolbar button enabled/disabled in lockstep.
+- Verification: `macOS/make-app.sh` release build clean, ad-hoc signature OK, installed to `/Applications`.
+
 ## 2026-07-17
 
 - Added sort-by-date-created and alphabetical sort to the Text Replacement Studio shortcuts list (GH-1): a `ReplacementSortOrder` (manual/dateCreated/alphabetical) wired into `StudioModel.filtered(_:search:)`, with a footer sort menu that shows the active mode and keeps the selected row in view across re-sorts. Default stays `.manual` so existing insertion-order behavior is unchanged.

@@ -22,6 +22,9 @@ struct TextReplacementStudioApp: App {
             CommandGroup(replacing: .newItem) {
                 NewReplacementCommand()
             }
+            CommandGroup(replacing: .saveItem) {
+                ApplyToMacOSCommand()
+            }
             CommandGroup(replacing: .appInfo) {
                 AboutCommand()
             }
@@ -57,5 +60,17 @@ private struct NewReplacementCommand: View {
         Button("New Replacement") { add?() }
             .keyboardShortcut("n", modifiers: .command)
             .disabled(add == nil)
+    }
+}
+
+/// File ▸ Apply to macOS (⌘S). Takes the .saveItem slot because writing the live database
+/// is this app's "save"; opens the same confirmation dialog as the toolbar button.
+private struct ApplyToMacOSCommand: View {
+    @FocusedValue(\.applyToMacOS) private var apply
+
+    var body: some View {
+        Button("Apply to macOS…") { apply?() }
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(apply == nil)
     }
 }
