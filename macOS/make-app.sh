@@ -19,7 +19,7 @@ cd "$PKG_DIR"
 APP_NAME="Text Replacement Studio"
 EXEC_NAME="TextReplacementStudio"
 BUNDLE_ID="me.neochro.TextReplacementStudio"
-VERSION="1.0"
+VERSION="1.0.1"
 DIST="$PKG_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 

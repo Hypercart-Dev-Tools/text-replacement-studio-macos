@@ -6,7 +6,8 @@ import TextReplacementCore
 struct TextReplacementStudioApp: App {
     init() {
         // SwiftPM's generated bundle has no Info.plist icon key, so set the Dock /
-        // ⌘-Tab icon at launch from the bundled artwork.
+        // ⌘-Tab icon at launch from the bundled artwork. Keep AppIcon.png's
+        // optical margin intact: macOS does not normalize full-bleed art.
         if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
            let icon = NSImage(contentsOf: url) {
             NSApplication.shared.applicationIconImage = icon

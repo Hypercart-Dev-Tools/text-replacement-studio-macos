@@ -18,6 +18,14 @@ Build, bundle, and install Text Replacement Studio to `/Applications` (release b
 ./make-app.sh                # or: ./make-app.sh --no-install to assemble into ./dist only
 ```
 
+## App icon
+
+`Apps/TextReplacementStudio/Resources/AppIcon.png` supplies the runtime Dock
+and app-switcher icon, while `AppIcon.icns` supplies the packaged app. Keep both
+assets aligned. The 1024px master is optically sized by scaling the original
+canvas to 938px and centering it; its visible artwork therefore stays within an
+824px maximum footprint instead of looking oversized beside neighboring apps.
+
 ## Build / develop
 
 ```bash

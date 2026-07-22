@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 2026-07-21
+
+- Normalized the Text Replacement Studio app icon's optical size: preserved the artwork while scaling its source canvas to 938px and centering it, so the visible icon fits within an 824px maximum footprint and no longer appears oversized beside neighboring macOS icons.
+
 ## 2026-07-17
 
 - Added sort-by-date-created and alphabetical sort to the Text Replacement Studio shortcuts list (GH-1): a `ReplacementSortOrder` (manual/dateCreated/alphabetical) wired into `StudioModel.filtered(_:search:)`, with a footer sort menu that shows the active mode and keeps the selected row in view across re-sorts. Default stays `.manual` so existing insertion-order behavior is unchanged.
