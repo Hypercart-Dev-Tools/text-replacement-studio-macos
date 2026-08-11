@@ -39,4 +39,16 @@ public extension Replacement {
     var normalizedPhrase: String {
         phrase.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Rolling window behind the "Recently Changed" smart filter.
+    static let recencyWindow: TimeInterval = 7 * 24 * 60 * 60
+
+    /// Whether this row was added or edited inside the recency window. Only meaningful once
+    /// `ReplacementTimestampStore` has stamped it — the import JSON carries no timestamps.
+    func isRecentlyChanged(
+        now: Date = Date(),
+        window: TimeInterval = Replacement.recencyWindow
+    ) -> Bool {
+        updatedAt > now.addingTimeInterval(-window)
+    }
 }

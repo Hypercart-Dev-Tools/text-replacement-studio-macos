@@ -53,6 +53,61 @@ struct AppleDatabaseBridgeE2ETests {
         #expect(after.count == before.count)   // nothing written
         #expect(!after.contains { $0.shortcut == "zz_plan_only" })
     }
+
+    /// Applying content that hasn't changed must not re-stamp `ZTIMESTAMP`.
+    ///
+    /// The writer used to UPDATE every desired shortcut unconditionally — including the
+    /// ones its own dry-run plan reported as `skip` — which flattened the whole library's
+    /// timestamps to "now" on every apply and re-flagged every row for CloudKit upload.
+    /// That is how a real user's per-row history (dating back to 2013) was lost.
+    @Test(.enabled(if: BridgeTestSupport.canRun,
+                   "Needs python3 + repo scripts/ + a source DB (set FKR_TEST_DB to override)."))
+    func applyingUnchangedContentPreservesRowTimestamps() async throws {
+        let env = try BridgeTestSupport.makeSandbox()
+        defer { env.cleanup() }
+
+        let importer = AppleDatabaseImporter(bridge: env.bridge)
+        let before = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+        try #require(!before.isEmpty, "source DB has no replacements to test against")
+
+        let timestampsBefore = try BridgeTestSupport.timestamps(in: env.databasePath)
+        try #require(!timestampsBefore.isEmpty)
+
+        // Push the library straight back, byte-identical: every row is a no-op.
+        let writer = AppleDatabaseWriter(bridge: env.bridge, backupDirectory: env.backupDir)
+        let outcome = try writer.apply(before, strategy: .merge)
+        #expect(outcome.applied)
+
+        let timestampsAfter = try BridgeTestSupport.timestamps(in: env.databasePath)
+        #expect(timestampsAfter == timestampsBefore)
+    }
+
+    /// The complement: a row that really did change *should* be re-stamped, so the fix
+    /// above can't be satisfied by simply never writing timestamps at all.
+    @Test(.enabled(if: BridgeTestSupport.canRun,
+                   "Needs python3 + repo scripts/ + a source DB (set FKR_TEST_DB to override)."))
+    func applyingAnEditedRowDoesRestampOnlyThatRow() async throws {
+        let env = try BridgeTestSupport.makeSandbox()
+        defer { env.cleanup() }
+
+        let importer = AppleDatabaseImporter(bridge: env.bridge)
+        var library = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+        try #require(library.count >= 2, "need at least two rows to tell touched from untouched")
+
+        let timestampsBefore = try BridgeTestSupport.timestamps(in: env.databasePath)
+        let edited = library[0].shortcut
+        library[0].phrase += " · edited \(UUID().uuidString.prefix(6))"
+
+        let writer = AppleDatabaseWriter(bridge: env.bridge, backupDirectory: env.backupDir)
+        let outcome = try writer.apply(library, strategy: .merge)
+        #expect(outcome.applied)
+
+        let timestampsAfter = try BridgeTestSupport.timestamps(in: env.databasePath)
+        #expect(timestampsAfter[edited] != timestampsBefore[edited])   // the edit is stamped
+        for (shortcut, stamp) in timestampsBefore where shortcut != edited {
+            #expect(timestampsAfter[shortcut] == stamp)                // everyone else untouched
+        }
+    }
 }
 
 // MARK: - Gating + sandbox
@@ -63,7 +118,49 @@ enum BridgeTestSupport {
         let root: URL
         let bridge: PythonBridge
         let backupDir: URL
+        /// The throwaway DB copy this sandbox targets — for assertions on columns the
+        /// canonical JSON doesn't carry (ZTIMESTAMP, ZNEEDSSAVETOCLOUD).
+        var databasePath: URL { bridge.databasePath }
         func cleanup() { try? FileManager.default.removeItem(at: root) }
+    }
+
+    enum BridgeTestError: Error { case sqliteFailed(status: Int32, stderr: String) }
+
+    static let sqlite3Path = "/usr/bin/sqlite3"
+
+    /// Shortcut → raw `ZTIMESTAMP`, read straight from SQLite. The canonical JSON has no
+    /// timestamp fields, so the bridge round-trip can't see this column at all.
+    static func timestamps(in database: URL) throws -> [String: String] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: sqlite3Path)
+        process.arguments = [
+            database.path,
+            """
+            SELECT ZSHORTCUT || char(9) || COALESCE(ZTIMESTAMP, '') FROM ZTEXTREPLACEMENTENTRY
+            WHERE COALESCE(ZWASDELETED, 0) = 0 AND ZSHORTCUT IS NOT NULL;
+            """,
+        ]
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        try process.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw BridgeTestError.sqliteFailed(
+                status: process.terminationStatus,
+                stderr: String(decoding: errData, as: UTF8.self)
+            )
+        }
+
+        var result: [String: String] = [:]
+        for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+            let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            result[String(parts[0])] = String(parts[1])
+        }
+        return result
     }
 
     /// Source database to copy from: explicit `FKR_TEST_DB`, else the live DB if present.
@@ -87,6 +184,7 @@ enum BridgeTestSupport {
     }
 
     static let canRun: Bool = sourceDatabase != nil && scriptsDirectory != nil && python3Available
+        && FileManager.default.isExecutableFile(atPath: sqlite3Path)
 
     /// Copy the source DB (and any WAL/SHM sidecars) into a throwaway dir and build a
     /// bridge that targets the copy.

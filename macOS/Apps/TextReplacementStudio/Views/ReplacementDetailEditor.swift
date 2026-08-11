@@ -231,7 +231,7 @@ struct ReplacementDetailEditor: View {
             get: { MainActor.assumeIsolated { model.replacements[index][keyPath: keyPath] } },
             set: { value in MainActor.assumeIsolated {
                 model.replacements[index][keyPath: keyPath] = value
-                model.replacements[index].updatedAt = Date()
+                model.touch(index)
             } }
         )
     }
@@ -241,7 +241,7 @@ struct ReplacementDetailEditor: View {
             get: { MainActor.assumeIsolated { model.replacements[index][keyPath: keyPath] } },
             set: { value in MainActor.assumeIsolated {
                 model.replacements[index][keyPath: keyPath] = value
-                model.replacements[index].updatedAt = Date()
+                model.touch(index)
             } }
         )
     }
@@ -251,7 +251,7 @@ struct ReplacementDetailEditor: View {
             get: { MainActor.assumeIsolated { model.replacements[index][keyPath: keyPath] ?? "" } },
             set: { value in MainActor.assumeIsolated {
                 model.replacements[index][keyPath: keyPath] = value.isEmpty ? nil : value
-                model.replacements[index].updatedAt = Date()
+                model.touch(index)
             } }
         )
     }
@@ -265,7 +265,7 @@ struct ReplacementDetailEditor: View {
             } },
             set: { value in MainActor.assumeIsolated {
                 model.replacements[index].groupName = value == Self.noneTag ? nil : value
-                model.replacements[index].updatedAt = Date()
+                model.touch(index)
             } }
         )
     }

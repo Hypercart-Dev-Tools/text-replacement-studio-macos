@@ -24,6 +24,13 @@ final class StudioModel {
     /// How the middle list is ordered — default preserves import/insertion order.
     var sortOrder: ReplacementSortOrder = .manual
 
+    /// Survives `createdAt` / `updatedAt` across launches. The import JSON has no timestamp
+    /// fields, so without this every launch would re-stamp the library and "Recently Changed"
+    /// would always read zero.
+    private let timestamps = ReplacementTimestampStore()
+    /// Debounce handle for the sidecar write — typing in the phrase editor fires per keystroke.
+    private var timestampSaveTask: Task<Void, Never>?
+
     // MARK: - macOS bridge
 
     func importFromMacOS() async {
@@ -35,10 +42,12 @@ final class StudioModel {
                     request: ReplacementImportRequest(source: .appleDatabase)
                 ).imported
             }.value
-            replacements = imported
-            importedBaseline = imported
-            statusText = "Imported \(imported.count) replacements from the live macOS database."
-            showToast(.init(text: "Imported \(imported.count) replacements", style: .success))
+            // Restore each row's remembered edit history before it reaches the UI.
+            let stamped = await timestamps.reconcile(imported)
+            replacements = stamped
+            importedBaseline = stamped
+            statusText = "Imported \(stamped.count) replacements from the live macOS database."
+            showToast(.init(text: "Imported \(stamped.count) replacements", style: .success))
         } catch {
             statusText = "Import failed: \(error.localizedDescription)"
             showToast(.init(text: "Import failed", style: .error, action: .retryImport))
@@ -68,6 +77,9 @@ final class StudioModel {
             if write {
                 lastAppliedAt = Date()
                 importedBaseline = items          // edits are now the on-disk truth
+                // Re-baseline the sidecar's fingerprints against what we just wrote, so a later
+                // launch doesn't read our own apply as an edit made outside the app.
+                await timestamps.reconcile(items)
                 showToast(.init(text: "Applied to macOS — quit & reopen apps to see changes",
                                 style: .success))
             }
@@ -88,7 +100,25 @@ final class StudioModel {
     func toggleEnabled(_ id: Replacement.ID) {
         guard let i = index(of: id) else { return }
         replacements[i].enabled.toggle()
-        replacements[i].updatedAt = Date()
+        touch(i)
+    }
+
+    /// Stamp a row as edited now and schedule the debounced sidecar write. Every mutation
+    /// path goes through here so "Recently Changed" can't silently miss one.
+    func touch(_ index: Int) {
+        guard replacements.indices.contains(index) else { return }
+        replacements[index].updatedAt = Date()
+        scheduleTimestampSave()
+    }
+
+    /// Coalesce the sidecar write — the phrase editor's binding fires on every keystroke.
+    private func scheduleTimestampSave() {
+        timestampSaveTask?.cancel()
+        timestampSaveTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            await timestamps.record(replacements)
+        }
     }
 
     /// Create a blank replacement at the top of the library and return its id so the
@@ -97,6 +127,8 @@ final class StudioModel {
     func addReplacement(groupName: String? = nil) -> Replacement.ID {
         let new = Replacement(shortcut: "", phrase: "", enabled: true, groupName: groupName)
         replacements.insert(new, at: 0)
+        // Not persisted yet — a row with no shortcut isn't a replacement. The first keystroke
+        // in the shortcut field goes through `touch` and records it.
         return new.id
     }
 
@@ -142,7 +174,8 @@ final class StudioModel {
         case .ungrouped:
             base = replacements.filter { ($0.groupName ?? "").isEmpty }
         case .recentlyChanged:
-            base = replacements.filter { changedSinceImport($0) }
+            let now = Date()
+            base = replacements.filter { $0.isRecentlyChanged(now: now) }
         case .duplicates:
             let dupes = duplicateShortcuts
             base = replacements.filter { dupes.contains($0.normalizedShortcut.lowercased()) }
@@ -162,11 +195,6 @@ final class StudioModel {
             seen[r.normalizedShortcut.lowercased(), default: 0] += 1
         }
         return Set(seen.filter { $0.value > 1 }.keys)
-    }
-
-    private func changedSinceImport(_ r: Replacement) -> Bool {
-        guard let original = importedBaseline.first(where: { $0.id == r.id }) else { return true }
-        return !original.contentEquals(r)
     }
 
     // MARK: - Preview diff (current edits vs. the imported baseline)

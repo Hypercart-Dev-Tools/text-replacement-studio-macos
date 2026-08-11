@@ -206,6 +206,21 @@ def current_by_shortcut(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
     return result
 
 
+def needs_update(existing: sqlite3.Row, phrase: str) -> bool:
+    """Whether an existing active row actually differs from what we intend to write.
+
+    Both the planner and the writer route through this, so the dry-run plan cannot drift
+    from what --apply really does. Rewriting an unchanged row is NOT free:
+
+      * ZTIMESTAMP gets re-stamped, destroying the only record macOS keeps of when a
+        replacement was added or last edited (and the app's "Recently Changed" view
+        depends on it).
+      * ZNEEDSSAVETOCLOUD gets set, forcing CloudKit to re-upload the entire library
+        on every apply instead of just the rows that moved.
+    """
+    return str(existing["ZPHRASE"]) != phrase
+
+
 def plan_changes(current: dict[str, sqlite3.Row], desired: list[dict], delete_missing: bool) -> list[tuple[str, str, str | None]]:
     desired_by_shortcut = {item["shortcut"]: item for item in desired}
     plan = []
@@ -214,7 +229,7 @@ def plan_changes(current: dict[str, sqlite3.Row], desired: list[dict], delete_mi
         row = current.get(shortcut)
         if row is None:
             plan.append(("add", shortcut, item["phrase"]))
-        elif str(row["ZPHRASE"]) != item["phrase"]:
+        elif needs_update(row, item["phrase"]):
             plan.append(("update", shortcut, item["phrase"]))
         else:
             plan.append(("skip", shortcut, None))
@@ -275,6 +290,12 @@ def apply_changes(conn: sqlite3.Connection, columns: list[sqlite3.Row], desired:
     for shortcut, item in desired_by_shortcut.items():
         existing = current.get(shortcut)
         if existing is not None:
+            # Leave genuinely-unchanged rows alone. `current` only ever holds ACTIVE rows,
+            # so there is no tombstone here needing revival — a no-op UPDATE would buy
+            # nothing and cost the row's history. This is the `skip` the plan already
+            # promised the user.
+            if not needs_update(existing, item["phrase"]):
+                continue
             set_parts = ["ZPHRASE = ?"]
             params = [item["phrase"]]
             if "ZNEEDSSAVETOCLOUD" in names:
