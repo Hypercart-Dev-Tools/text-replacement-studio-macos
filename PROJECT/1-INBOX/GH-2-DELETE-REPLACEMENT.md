@@ -72,16 +72,31 @@ discover them mid-build and turn into a rabbit hole.
    specific removals. That is a `scripts/json_to_apple_sqlite.py` + `AppleDatabaseWriter` change,
    not just a UI change — **this is the phase most likely to be underestimated.**
 2. **Disable + Replace + Apply already soft-deletes, silently.** Pre-existing; see Why above.
-3. **`ReplacementDetailEditor` binds by index, not id.** `stringBinding(_ index:)` captures an
-   `Int`, while the `// MARK:` comment directly above claims "resolve the row by id each time".
-   A shrinking array plus a stale binding write is an out-of-bounds crash, and delete would be the
-   first feature to expose it. Verify and likely convert the bindings to id-resolved.
-4. **Dangling selection.** Deleting the selected row leaves `selectedReplacementID` pointing at a
-   row that no longer exists; the detail pane falls back to its empty state. Should select the
-   neighbouring row instead.
+3. **Index-based mutation paths corrupt the wrong row — this is worse than a crash.**
+   `stringBinding(_ index:)` captures an `Int`, while the `// MARK:` comment directly above claims
+   "resolve the row by id each time". *(Sharpened after agy QA.)* The out-of-bounds crash is the
+   **benign** case. The dangerous case: delete row 0, the array shrinks, and stale index 0 now
+   addresses a **different row** — the write lands silently on the neighbour. For the content
+   bindings that means the user's phrase or shortcut is overwritten with no error at all.
+   `StudioModel.touch(_ index:)` (`macOS/Apps/TextReplacementStudio/StudioModel.swift:108-112`)
+   shares the flaw and is *specifically* the benign-looking one: its `guard
+   replacements.indices.contains(index)` prevents the crash and therefore guarantees the silent
+   mis-stamp instead. **Note this API was introduced on 2026-08-11 by the timestamp-sidecar work
+   (commit `dd5cdbc`), i.e. this plan's own recent groundwork added a delete-hostile path.**
+   Phase 3 must migrate *every* mutation path to id resolution and delete the index-based `touch`
+   overload rather than leaving it beside an id-based one.
+4. **Selection behaviour on delete — INVERTED by gotcha 16.** *(Rewritten after agy round 2; the
+   original text here prescribed dead work.)* The original concern was a dangling
+   `selectedReplacementID` pointing at a removed row. Under the `isPendingDeletion` design the row
+   **stays in the array**, so the selection remains valid and must **not** move on a local delete.
+   The detail pane instead renders the selected row read-only with a Restore control. Selection only
+   needs to move when Apply actually clears the pending set and the rows really leave the array.
 5. **Tombstone re-add path.** Re-adding a previously deleted shortcut inserts a new row while the
    tombstone persists — the writer's UPDATE scopes to active rows only. Confirm this cannot
-   produce a duplicate-shortcut pair or a `ZUNIQUENAME` collision.
+   produce a duplicate active/tombstone shortcut pair. *(Narrowed after agy QA: the `ZUNIQUENAME`
+   half of this was wrong. A collision is impossible by construction — the writer mints a fresh
+   `str(uuid.uuid4()).upper()` for every insert at `scripts/json_to_apple_sqlite.py:185-186`. Only
+   the duplicate-shortcut concern survives.)*
 6. **iCloud resurrection.** A soft-delete must reach CloudKit (`ZNEEDSSAVETOCLOUD = 1`) or another
    synced device will push the row straight back.
 7. **Timestamp sidecar.** `ReplacementTimestampStore.record()` deliberately does not prune, so a
@@ -128,6 +143,41 @@ discover them mid-build and turn into a rabbit hole.
     writer falls through to a real `DELETE FROM` (`scripts/json_to_apple_sqlite.py:335-337`),
     contradicting the stated boundary and freeing a `Z_PK`. Targeted deletion must abort instead.
 
+
+### Added after agy QA (2026-08-11) — second, independent review
+
+14. **`planDiff` hard-gates removals on the Replace strategy, so Preview would lie about targeted
+    deletes.** `let removes = strategy == .replace ? … : []`
+    (`macOS/Apps/TextReplacementStudio/StudioModel.swift:217-220`). The moment Merge can carry a
+    targeted deletion, this line makes the Preview Plan sheet show **zero** removals and keep
+    displaying its "Deletions are ignored under Merge" hint — directly contradicting the goal of a
+    confirmation that names what will be removed.
+    **Un-gating that line is necessary but NOT sufficient** *(agy round 2)*: `removes` is derived
+    from baseline ids missing out of `currentIDs`, and a pending-deleted row is still in
+    `replacements`, so its id is never missing — it would silently fall through into the `updates`
+    bucket instead. Phase 2 must compute `removes` from `replacements.filter(\.isPendingDeletion)`
+    (union the missing-id set under `.replace`) **and** exclude pending rows from `updates` and
+    `unchanged`.
+15. **The transport has no channel for "what was deleted".** `AppleDatabaseWriter` serializes only
+    the current `replacements` array
+    (`macOS/Sources/TextReplacementCore/Integration/AppleDatabaseWriter.swift:62`), which is the
+    *new* state. The Python side therefore cannot know a shortcut was renamed or removed — it can
+    only infer absence, which is exactly the blunt Replace behaviour gotcha 1 rejects. Phase 2 must
+    extend `CanonicalReplacementCodec` with an explicit `deletes` array carrying each target's
+    before-fingerprint. **This is the concrete mechanism gotchas 1 and 10 both depend on**, and
+    neither of them named it.
+    *(agy round 2 — spell the synthesis out, or a builder will wire only the obvious half.)* The
+    `deletes` array must be populated from **both**: (a) rows flagged `isPendingDeletion`, and
+    (b) the **before** state of any active row whose `shortcut` differs from its `importedBaseline`
+    entry — that second source is the only thing that makes a rename land as delete-old + add-new
+    (gotcha 10), because the writer discards JSON ids (gotcha 8) and cannot detect a rename itself.
+    Rows flagged `isPendingDeletion` must also be **excluded** from the active `items` array.
+16. **Pending deletion must be a flag on the row, not removal from the array.** If a delete simply
+    drops the row out of `replacements`, there is no longer any list item to hang a "Restore"
+    control on — which forces exactly the general undo stack that `non_goals` defers. Model it
+    instead as `isPendingDeletion` on the row: it stays in the array, renders struck-through in
+    Phase 3, and cancel is a flag flip. This is the design decision that makes the
+    cancel-in-scope / undo-deferred split in `non_goals` actually buildable.
 ## Anticipated phase shape
 
 Named here for scoping only; the real per-phase plan and QA gates are written on promotion to
@@ -139,16 +189,27 @@ of undefined semantics. Foundation first, transport second, UI last.
 
 - **Phase 0** — Explore & scope (this doc's checklist below)
 - **Phase 1 — Semantics & invariants (no user-visible change).** Define deletion identity (gotchas 8,
-  10); the pending-deletion state machine incl. cancel-before-Apply and delete-new-unsaved (11); the
+  10); model pending deletion as an `isPendingDeletion` flag on the row rather than removal from the
+  array, so cancel stays cheap and the deferred undo stack is not forced (gotcha 16); the
+  pending-deletion state machine incl. cancel-before-Apply and delete-new-unsaved (11); the
   fail-closed schema gate, `Z_OPT` handling and optimistic-concurrency check (12); abort-not-hard-delete
   (13); disabled-row semantics (2); and the empty-library flag (9).
 - **Phase 2 — Targeted-delete transport.** `AppleDatabaseWriter` → `json_to_apple_sqlite.py` carrying
   each target's expected baseline fingerprint, aborting the whole transaction on a missing, changed,
   or ambiguous target. Dry-run, Preview, confirmation and Apply must all consume **one** target set
-  (gotchas 1, 5, 6).
+  (gotchas 1, 5, 6). Concretely, this phase owns two changes neither the original plan nor the first
+  review named: extending `CanonicalReplacementCodec` with an explicit `deletes` array so the wire
+  format can express a removal at all (gotcha 15), and reworking `planDiff` so `removes` is driven
+  by the `isPendingDeletion` flag rather than by `strategy == .replace` (gotcha 14 — note that
+  merely deleting the strategy check is not enough; pending rows must also be kept out of `updates`
+  and `unchanged`).
 - **Phase 3 — UI affordances.** Local removal, context menu, ⌫ **scoped to list focus** so it cannot
   fire while the cursor is in the shortcut/phrase/search field, selection handling, the id-resolved
-  binding fix, and a confirmation naming exactly what will be removed (gotchas 3, 4). Also ships the
+  binding fix — migrating *every* mutation path to id resolution and removing the index-based
+  `touch(_ index:)` overload rather than leaving it alongside (gotcha 3) — a struck-through
+  rendering for rows flagged `isPendingDeletion` with an inline Restore control, selection
+  deliberately **not** moving on a local delete (gotcha 4), and a confirmation naming exactly what
+  will be removed (gotchas 3, 4, 16). Also ships the
   **restore/cancel control for a still-pending deletion** — the affordance that makes the
   cancellation carve-out in `non_goals` real rather than theoretical (gotcha 11). Without a visible
   way to undo a pending delete before Apply, "cancellable" is a claim with no UI behind it.
@@ -194,8 +255,10 @@ asserted against a SQLite fixture to do **exactly** this and nothing more:
 | Allocation untouched | `Z_PRIMARYKEY.Z_MAX` does not move (a delete must never free a PK) |
 | Timestamp | `ZTIMESTAMP` re-stamped — a delete *is* a change (cf. the GH-2-adjacent writer fix that stopped no-op rewrites destroying history) |
 
-Also retain a constrained-unique re-add case, and note that `scripts/target_save_check.py:29-38`'s mock
-table does **not** enforce `ZUNIQUENAME` uniqueness — the fixture must, or the re-add test proves nothing.
+Note that `scripts/target_save_check.py:29-38`'s mock table does not enforce `ZUNIQUENAME` uniqueness;
+the fixture should mirror the real schema's UNIQUE index as basic fidelity. *(Scoped down after agy QA:
+the re-add **collision** case it was meant to prove is impossible by construction — every insert mints a
+fresh `uuid.uuid4()`. Keep the constraint for schema fidelity, drop the collision test.)*
 - [ ] Decide the tool shape — reuse an existing command/script before new infrastructure
       (`/ponytail`)
 - [ ] Set/correct the triage ratings; clear `ratings_provisional` once real
