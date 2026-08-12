@@ -6,6 +6,15 @@ import Foundation
 public protocol CanonicalReplacementCoding: Sendable {
     func decode(_ data: Data) throws -> [Replacement]
     func encode(_ replacements: [Replacement]) throws -> Data
+    /// Encode with an explicit removal list. See `CanonicalReplacementCodec.encode(_:deletes:)`.
+    func encode(_ replacements: [Replacement], deletes: [ReplacementDeleteTarget]) throws -> Data
+}
+
+public extension CanonicalReplacementCoding {
+    /// Conformers that predate targeted deletes keep working — they simply cannot express one.
+    func encode(_ replacements: [Replacement], deletes: [ReplacementDeleteTarget]) throws -> Data {
+        try encode(replacements)
+    }
 }
 
 public struct CanonicalReplacementCodec: CanonicalReplacementCoding {
@@ -18,6 +27,9 @@ public struct CanonicalReplacementCodec: CanonicalReplacementCoding {
         var source: String?
         var generated_at: String?
         var items: [Item]
+        /// Shortcuts to remove, each with the on-disk state we expect. Absent for readers/writers
+        /// that predate targeted deletes, which is why it is optional.
+        var deletes: [ReplacementDeleteTarget]?
     }
 
     private struct Item: Codable {
@@ -46,21 +58,38 @@ public struct CanonicalReplacementCodec: CanonicalReplacementCoding {
     /// Writes every item (incl. disabled) with its `enabled` flag — the Python writer's preflight
     /// decides whether to drop disabled entries (via --include-disabled), so we keep them here.
     public func encode(_ replacements: [Replacement]) throws -> Data {
-        let items = replacements.map { replacement in
-            Item(
-                id: replacement.id.uuidString,
-                shortcut: replacement.shortcut,
-                phrase: replacement.phrase,
-                enabled: replacement.enabled,
-                group: replacement.groupName,
-                notes: replacement.notes
-            )
-        }
+        try encode(replacements, deletes: [])
+    }
+
+    /// Encode the library plus an explicit removal list.
+    ///
+    /// Rows flagged `isPendingDeletion` are stripped from `items` — leaving them in would tell the
+    /// writer to keep the very rows we are removing.
+    ///
+    /// The caller supplies `deletes`; `StudioModel.deleteTargets(against:)` is what builds it, and
+    /// it must draw from **two** sources: staged rows, and the *before* shortcut of any row that
+    /// was renamed. The writer keys everything by shortcut and discards our ids, so a rename it
+    /// isn't told about looks like an unrelated add and silently leaves the old row behind
+    /// (GH-2 gotchas 10 and 15).
+    public func encode(_ replacements: [Replacement], deletes: [ReplacementDeleteTarget]) throws -> Data {
+        let items = replacements
+            .filter { !$0.isPendingDeletion }
+            .map { replacement in
+                Item(
+                    id: replacement.id.uuidString,
+                    shortcut: replacement.shortcut,
+                    phrase: replacement.phrase,
+                    enabled: replacement.enabled,
+                    group: replacement.groupName,
+                    notes: replacement.notes
+                )
+            }
         let payload = Payload(
             schema: Self.schema,
             source: "TextReplacementStudio",
             generated_at: ISO8601DateFormatter().string(from: Date()),
-            items: items
+            items: items,
+            deletes: deletes.isEmpty ? nil : deletes
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]

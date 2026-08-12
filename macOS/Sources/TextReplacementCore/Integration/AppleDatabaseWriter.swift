@@ -46,20 +46,40 @@ public struct AppleDatabaseWriter: Sendable {
     }
 
     /// Dry-run: returns the writer's plan (add/update/delete/skip) without touching the DB.
-    public func plan(_ replacements: [Replacement], strategy: Strategy = .merge, includeDisabled: Bool = false) throws -> Outcome {
-        try run(replacements, strategy: strategy, includeDisabled: includeDisabled, apply: false)
+    ///
+    /// `deletes` carries targeted removals. They are honoured under **either** strategy — that is
+    /// the whole point: Merge previously had no way to express "remove this one row", so a delete
+    /// either did nothing or required the blunt Replace sweep (GH-2 gotcha 1).
+    public func plan(
+        _ replacements: [Replacement],
+        strategy: Strategy = .merge,
+        includeDisabled: Bool = false,
+        deletes: [ReplacementDeleteTarget] = []
+    ) throws -> Outcome {
+        try run(replacements, strategy: strategy, includeDisabled: includeDisabled, deletes: deletes, apply: false)
     }
 
     /// Apply for real. The Python writer makes a timestamped backup before writing.
-    public func apply(_ replacements: [Replacement], strategy: Strategy = .merge, includeDisabled: Bool = false) throws -> Outcome {
-        try run(replacements, strategy: strategy, includeDisabled: includeDisabled, apply: true)
+    public func apply(
+        _ replacements: [Replacement],
+        strategy: Strategy = .merge,
+        includeDisabled: Bool = false,
+        deletes: [ReplacementDeleteTarget] = []
+    ) throws -> Outcome {
+        try run(replacements, strategy: strategy, includeDisabled: includeDisabled, deletes: deletes, apply: true)
     }
 
-    private func run(_ replacements: [Replacement], strategy: Strategy, includeDisabled: Bool, apply: Bool) throws -> Outcome {
+    private func run(
+        _ replacements: [Replacement],
+        strategy: Strategy,
+        includeDisabled: Bool,
+        deletes: [ReplacementDeleteTarget],
+        apply: Bool
+    ) throws -> Outcome {
         let inURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("fkr-apply-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: inURL) }
-        try codec.encode(replacements).write(to: inURL)
+        try codec.encode(replacements, deletes: deletes).write(to: inURL)
 
         var arguments = [
             inURL.path,

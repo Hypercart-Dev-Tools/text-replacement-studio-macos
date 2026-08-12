@@ -36,7 +36,30 @@ struct ContentView: View {
 
     /// Whether Apply is currently available — shared by the toolbar button and the
     /// File ▸ Apply to macOS menu item so the two can't disagree.
-    private var canApply: Bool { !model.isBusy && !model.replacements.isEmpty }
+    /// Deliberately keyed on `hasImported`, not `!replacements.isEmpty`: deleting your last
+    /// replacement leaves an empty library that still needs applying (GH-2 gotcha 9).
+    private var canApply: Bool { !model.isBusy && model.hasImported }
+
+    private var pendingRemovals: [Replacement] {
+        model.planDiff(strategy: model.strategy).removes
+    }
+
+    private var applyButtonTitle: String {
+        let count = pendingRemovals.count
+        return count > 0 ? "Delete \(count) & Apply" : "Apply (\(model.strategy.rawValue))"
+    }
+
+    /// Names the shortcuts about to be removed. A bare count is not a confirmation — deletion is
+    /// the one action here with no undo once it reaches the database.
+    private var applyConfirmationMessage: String {
+        let base = "A timestamped backup is written first. Afterward you may need to quit and reopen System Settings and affected apps for changes to show."
+        let removes = pendingRemovals
+        guard !removes.isEmpty else { return base }
+        let names = removes.prefix(8).map(\.shortcut).joined(separator: ", ")
+        let more = removes.count > 8 ? " and \(removes.count - 8) more" : ""
+        let noun = removes.count == 1 ? "replacement" : "replacements"
+        return "This will DELETE \(removes.count) \(noun) from macOS: \(names)\(more).\n\n" + base
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -48,7 +71,9 @@ struct ContentView: View {
                 searchText: $searchText,
                 selectedFilter: selectedFilter,
                 selectedReplacementID: $selectedReplacementID,
-                onAdd: newReplacement
+                onAdd: newReplacement,
+                onDelete: { model.deleteReplacement($0) },
+                onRestore: { model.restoreReplacement($0) }
             )
             .navigationSplitViewColumnWidth(min: 340, ideal: 392, max: 520)
         } detail: {
@@ -82,12 +107,12 @@ struct ContentView: View {
             isPresented: $confirmApply,
             titleVisibility: .visible
         ) {
-            Button("Apply (\(model.strategy.rawValue))", role: .destructive) {
+            Button(applyButtonTitle, role: .destructive) {
                 Task { await model.pushToMacOS(strategy: model.strategy, write: true) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("A timestamped backup is written first. Afterward you may need to quit and reopen System Settings and affected apps for changes to show.")
+            Text(applyConfirmationMessage)
         }
     }
 
@@ -117,7 +142,7 @@ struct ContentView: View {
             .help("Merge adds & updates; Replace also removes shortcuts no longer present.")
 
             Button("Preview Plan") { showPreview = true }
-                .disabled(model.replacements.isEmpty)
+                .disabled(!model.hasImported)
                 .help("See what Apply would change — writes nothing.")
 
             Button("Apply to macOS…") { confirmApply = true }

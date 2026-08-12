@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import collections
 import datetime as dt
+import hashlib
 import json
 import pathlib
 import sqlite3
@@ -37,19 +38,64 @@ def core_data_timestamp() -> float:
     return time.time() - CORE_DATA_EPOCH_OFFSET
 
 
-def load_items(path: pathlib.Path, include_disabled: bool) -> list[dict]:
+def native_fingerprint(shortcut: str, phrase: str) -> str:
+    """Hash of the only two fields Apple's table stores.
+
+    Must stay byte-identical to Swift's `Replacement.nativeFingerprint`: SHA-256 over
+    NUL-joined (trimmed shortcut, phrase), lowercase hex. It deliberately excludes
+    enabled/group/notes — those live only in the app, so the database could never confirm them
+    and every delete would abort.
+    """
+    return hashlib.sha256("\0".join([shortcut.strip(), phrase]).encode("utf-8")).hexdigest()
+
+
+def load_payload(path: pathlib.Path, include_disabled: bool) -> tuple[list[dict], list[dict]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     items = payload.get("items")
     if not isinstance(items, list):
         raise ValueError("JSON must contain an items array")
     cleaned = replacements_common.preflight(items, include_disabled=include_disabled)
-    return [{"shortcut": item["shortcut"], "phrase": str(item["phrase"])} for item in cleaned]
+    kept = [{"shortcut": item["shortcut"], "phrase": str(item["phrase"])} for item in cleaned]
+
+    raw_deletes = payload.get("deletes") or []
+    if not isinstance(raw_deletes, list):
+        raise ValueError("JSON `deletes` must be an array when present")
+    deletes = []
+    seen = set()
+    for entry in raw_deletes:
+        shortcut = str(entry.get("shortcut", "")).strip()
+        fingerprint = str(entry.get("fingerprint", ""))
+        if not shortcut:
+            raise ValueError("every `deletes` entry needs a non-empty shortcut")
+        if not fingerprint:
+            raise ValueError(f"delete target {shortcut!r} has no fingerprint; refusing to delete unverified")
+        if shortcut in seen:
+            raise ValueError(f"duplicate delete target: {shortcut!r}")
+        seen.add(shortcut)
+        deletes.append({"shortcut": shortcut, "fingerprint": fingerprint})
+
+    # Asking to keep and remove the same shortcut in one payload is contradictory; refuse rather
+    # than let ordering decide which one wins.
+    conflicts = sorted({d["shortcut"] for d in deletes} & {i["shortcut"].strip() for i in kept})
+    if conflicts:
+        raise ValueError(f"shortcut(s) present in both items and deletes: {conflicts}")
+    return kept, deletes
 
 
 def backup_database(db_path: pathlib.Path, backup_dir: pathlib.Path) -> pathlib.Path:
     backup_dir.mkdir(parents=True, exist_ok=True)
-    target_dir = backup_dir / f"text-replacements-backup-{now_stamp()}"
-    target_dir.mkdir()
+    # The stamp is second-granular, so two applies inside the same second would collide. Never
+    # reuse the directory (that would overwrite the older backup with the newer one) — take the
+    # next free suffix instead. A backup we silently clobber is a backup we do not have.
+    base = backup_dir / f"text-replacements-backup-{now_stamp()}"
+    target_dir, attempt = base, 2
+    while True:
+        try:
+            target_dir.mkdir()
+            break
+        except FileExistsError:
+            target_dir = base.with_name(f"{base.name}-{attempt}")
+            attempt += 1
 
     # SQLite online backup = a consistent point-in-time snapshot even if another process
     # is mid-write (a raw copy of a live WAL DB can be torn). Restore by copying this
@@ -221,7 +267,62 @@ def needs_update(existing: sqlite3.Row, phrase: str) -> bool:
     return str(existing["ZPHRASE"]) != phrase
 
 
-def plan_changes(current: dict[str, sqlite3.Row], desired: list[dict], delete_missing: bool) -> list[tuple[str, str, str | None]]:
+def active_rows_by_shortcut(rows: list[sqlite3.Row]) -> dict[str, list[sqlite3.Row]]:
+    grouped: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        shortcut = row["ZSHORTCUT"]
+        if shortcut is None:
+            continue
+        grouped.setdefault(str(shortcut).strip(), []).append(row)
+    return grouped
+
+
+def resolve_delete_targets(
+    rows: list[sqlite3.Row], names: set[str], deletes: list[dict]
+) -> list[sqlite3.Row]:
+    """Match every delete target to exactly one live active row, or raise.
+
+    Fail-closed on purpose. A delete is the one operation with no undo, and the database is
+    re-read at apply time, so anything ambiguous (target gone, target changed since the plan was
+    shown, two active rows sharing the shortcut) aborts the whole transaction rather than guessing.
+    """
+    if not deletes:
+        return []
+    if "ZWASDELETED" not in names:
+        # Non-negotiable: the alternative is a hard DELETE, which frees a Z_PK and risks the sync
+        # daemon. Refusing is the documented contract (GH-2 gotcha 13).
+        raise RuntimeError(
+            "refusing to delete: this table has no ZWASDELETED column, so the removal could only "
+            "be a hard DELETE. Targeted deletion is soft-delete only."
+        )
+
+    grouped = active_rows_by_shortcut(rows)
+    resolved = []
+    for target in deletes:
+        shortcut = target["shortcut"]
+        matches = grouped.get(shortcut, [])
+        if not matches:
+            raise RuntimeError(
+                f"refusing to delete {shortcut!r}: no active row with that shortcut "
+                "(already removed, or changed since the plan was computed)"
+            )
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"refusing to delete {shortcut!r}: {len(matches)} active rows share this shortcut; "
+                "resolve the duplicate first so the deletion is unambiguous"
+            )
+        row = matches[0]
+        actual = native_fingerprint(str(row["ZSHORTCUT"]), str(row["ZPHRASE"]))
+        if actual != target["fingerprint"]:
+            raise RuntimeError(
+                f"refusing to delete {shortcut!r}: it changed since the plan was computed "
+                "(edited in System Settings, or synced from another device). Re-import and retry."
+            )
+        resolved.append(row)
+    return resolved
+
+
+def plan_changes(current: dict[str, sqlite3.Row], desired: list[dict], delete_missing: bool, deletes: list[dict] | None = None) -> list[tuple[str, str, str | None]]:
     desired_by_shortcut = {item["shortcut"]: item for item in desired}
     plan = []
 
@@ -237,6 +338,10 @@ def plan_changes(current: dict[str, sqlite3.Row], desired: list[dict], delete_mi
     if delete_missing:
         for shortcut in sorted(set(current) - set(desired_by_shortcut), key=str.lower):
             plan.append(("delete", shortcut, None))
+
+    # Targeted deletes apply under BOTH strategies — that is what lets Merge express a removal.
+    for target in sorted(deletes or [], key=lambda d: d["shortcut"].lower()):
+        plan.append(("delete", target["shortcut"], None))
 
     return plan
 
@@ -274,9 +379,12 @@ def update_primary_key_table(conn: sqlite3.Connection, entity: int | None, max_p
     conn.execute("UPDATE Z_PRIMARYKEY SET Z_MAX = MAX(Z_MAX, ?) WHERE Z_ENT = ?;", (max_pk, entity))
 
 
-def apply_changes(conn: sqlite3.Connection, columns: list[sqlite3.Row], desired: list[dict], delete_missing: bool) -> None:
+def apply_changes(conn: sqlite3.Connection, columns: list[sqlite3.Row], desired: list[dict], delete_missing: bool, deletes: list[dict] | None = None) -> None:
     names = set(column_names(columns))
     rows = fetch_current(conn, names)
+    # Verify every delete target BEFORE any mutation. Raising here happens inside the caller's
+    # BEGIN IMMEDIATE, so a bad target rolls back the adds/updates too — all or nothing.
+    delete_rows = resolve_delete_targets(rows, names, deletes or [])
     current = current_by_shortcut(rows)
     desired_by_shortcut = {item["shortcut"]: item for item in desired}
     # Entity + template metadata must come from ALL rows (incl. tombstones): after a
@@ -336,6 +444,24 @@ def apply_changes(conn: sqlite3.Connection, columns: list[sqlite3.Row], desired:
             else:
                 conn.execute(f"DELETE FROM {TABLE} WHERE ZSHORTCUT = ?;", (shortcut,))
 
+    for row in delete_rows:
+        set_parts = ["ZWASDELETED = 1"]
+        params: list = []
+        if "ZNEEDSSAVETOCLOUD" in names:
+            set_parts.append("ZNEEDSSAVETOCLOUD = 1")   # or the tombstone never reaches CloudKit
+        if "ZTIMESTAMP" in names:
+            set_parts.append("ZTIMESTAMP = ?")
+            params.append(core_data_timestamp())        # a delete IS a change
+        if "Z_OPT" in names:
+            # Core Data's optimistic-locking version. Bumped only on this path: the pre-existing
+            # update/replace paths never touched it and changing them is out of scope here.
+            set_parts.append("Z_OPT = COALESCE(Z_OPT, 0) + 1")
+        params.append(row["Z_PK"])
+        # Address the resolved row by primary key, not by shortcut: Z_PK is unambiguous and cannot
+        # sweep up a tombstone the way a bare `WHERE ZSHORTCUT = ?` does. Z_PK, ZUNIQUENAME and
+        # ZREMOTERECORDINFO are left untouched so the row keeps its identity for CloudKit.
+        conn.execute(f"UPDATE {TABLE} SET {', '.join(set_parts)} WHERE Z_PK = ?;", params)
+
     if max_inserted_pk > 0:
         update_primary_key_table(conn, entity, max_inserted_pk)
 
@@ -352,7 +478,7 @@ def main() -> int:
 
     try:
         db_path = args.db.expanduser()
-        desired = load_items(args.input, include_disabled=args.include_disabled)
+        desired, deletes = load_payload(args.input, include_disabled=args.include_disabled)
         delete_missing = args.strategy == "replace"
 
         with connect(db_path, readonly=not args.apply) as conn:
@@ -360,7 +486,9 @@ def main() -> int:
             names = set(column_names(columns))
             rows = fetch_current(conn, names)
             current = current_by_shortcut(rows)
-            plan = plan_changes(current, desired, delete_missing)
+            plan = plan_changes(current, desired, delete_missing, deletes)
+            # Surface a bad target during the dry-run, not first at apply time.
+            resolve_delete_targets(rows, names, deletes)
             print_plan(plan)
 
         if not args.apply:
@@ -374,7 +502,7 @@ def main() -> int:
             columns = table_columns(conn)
             conn.execute("BEGIN IMMEDIATE;")
             try:
-                apply_changes(conn, columns, desired, delete_missing)
+                apply_changes(conn, columns, desired, delete_missing, deletes)
             except Exception:
                 conn.rollback()
                 raise

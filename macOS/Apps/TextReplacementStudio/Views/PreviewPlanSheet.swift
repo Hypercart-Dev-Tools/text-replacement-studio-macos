@@ -74,8 +74,9 @@ struct PreviewPlanSheet: View {
                 if !diff.removes.isEmpty {
                     DiffSection(title: "Removed", color: Theme.diffRemove,
                                 items: diff.removes.map { DiffLine(shortcut: $0.shortcut, detail: $0.phrase) })
-                } else if strategy == .merge && model.importedBaseline.count > model.replacements.count {
-                    Text("Deletions are ignored under Merge. Switch to Replace to remove shortcuts.")
+                    // Staged deletions are honoured under both strategies now, so the old
+                    // "deletions are ignored under Merge" hint would be actively wrong here.
+                    Text("These are removed from macOS on Apply. Restore a row from its context menu to cancel.")
                         .font(Theme.body).foregroundStyle(Theme.text3)
                 }
             }

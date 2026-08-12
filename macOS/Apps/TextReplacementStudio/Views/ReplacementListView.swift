@@ -9,11 +9,17 @@ struct ReplacementListView: View {
     let selectedFilter: ReplacementFilter
     @Binding var selectedReplacementID: Replacement.ID?
     let onAdd: () -> Void
+    let onDelete: (Replacement.ID) -> Void
+    let onRestore: (Replacement.ID) -> Void
 
     @FocusState private var searchFocused: Bool
+    /// Whether the row list itself holds focus. ⌫ is gated on this so the key cannot delete a
+    /// replacement while the cursor is in the search field or an editor (GH-2, Phase 3).
+    @FocusState private var listFocused: Bool
 
     private var rows: [Replacement] { model.filtered(selectedFilter, search: searchText) }
-    private var disabledCount: Int { rows.filter { !$0.enabled }.count }
+    private var disabledCount: Int { rows.filter { !$0.enabled && !$0.isPendingDeletion }.count }
+    private var pendingDeleteCount: Int { rows.filter(\.isPendingDeletion).count }
 
     private var sortOrderBinding: Binding<ReplacementSortOrder> {
         Binding(get: { model.sortOrder }, set: { model.sortOrder = $0 })
@@ -83,9 +89,27 @@ struct ReplacementListView: View {
                                 onSelect: { selectedReplacementID = r.id }
                             )
                             .id(r.id)
+                            .contextMenu {
+                                if r.isPendingDeletion {
+                                    Button("Restore") { onRestore(r.id) }
+                                } else {
+                                    Button("Delete", role: .destructive) { onDelete(r.id) }
+                                }
+                            }
                         }
                     }
                     .padding(.top, 2)
+                }
+                .focusable()
+                .focused($listFocused)
+                .focusEffectDisabled()
+                .onTapGesture { listFocused = true }
+                // Scoped to list focus on purpose: unscoped, this would fire mid-word in the
+                // phrase editor or the search field.
+                .onDeleteCommand {
+                    guard listFocused, let id = selectedReplacementID,
+                          let row = model.replacement(id) else { return }
+                    row.isPendingDeletion ? onRestore(id) : onDelete(id)
                 }
                 .onChange(of: rows.map(\.id)) {
                     guard let id = selectedReplacementID else { return }
@@ -126,6 +150,12 @@ struct ReplacementListView: View {
                 Text("\(rows.count) replacement\(rows.count == 1 ? "" : "s")")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text2)
+                if pendingDeleteCount > 0 {
+                    Circle().fill(Theme.diffRemove).frame(width: 3, height: 3)
+                    Text("\(pendingDeleteCount) to delete")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.diffRemove)
+                }
                 if disabledCount > 0 {
                     Circle().fill(Theme.text3).frame(width: 3, height: 3)
                     Text("\(disabledCount) disabled")

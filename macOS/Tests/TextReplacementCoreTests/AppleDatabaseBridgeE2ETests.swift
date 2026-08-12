@@ -110,6 +110,94 @@ struct AppleDatabaseBridgeE2ETests {
     }
 }
 
+    /// The core promise of the feature: a single row is removed, under **Merge** — the strategy
+    /// that previously could not express a deletion at all.
+    @Test(.enabled(if: BridgeTestSupport.canRun,
+                   "Needs python3 + repo scripts/ + a source DB (set FKR_TEST_DB to override)."))
+    func targetedDeleteRemovesExactlyOneRowUnderMerge() async throws {
+        let env = try BridgeTestSupport.makeSandbox()
+        defer { env.cleanup() }
+
+        let importer = AppleDatabaseImporter(bridge: env.bridge)
+        let writer = AppleDatabaseWriter(bridge: env.bridge, backupDirectory: env.backupDir)
+
+        // Seed a row we own, so the test never depends on the contents of the source DB.
+        let shortcut = "zz_del_\(Int.random(in: 100_000...999_999))"
+        let before = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+        let seeded = before + [Replacement(shortcut: shortcut, phrase: "delete me")]
+        #expect(try writer.apply(seeded, strategy: .merge).applied)
+
+        let withRow = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+        let doomed = try #require(withRow.first { $0.shortcut == shortcut })
+        let othersBefore = withRow.count - 1
+
+        let target = ReplacementDeleteTarget(
+            shortcut: doomed.normalizedShortcut, fingerprint: doomed.nativeFingerprint
+        )
+        let survivors = withRow.filter { $0.shortcut != shortcut }
+        #expect(try writer.apply(survivors, strategy: .merge, deletes: [target]).applied)
+
+        let after = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+        #expect(!after.contains { $0.shortcut == shortcut })   // the target is gone
+        #expect(after.count == othersBefore)                    // and nothing else went with it
+    }
+
+    /// Optimistic concurrency: if the row changed after the plan was computed, the delete must
+    /// abort rather than remove something the user never saw in the confirmation.
+    @Test(.enabled(if: BridgeTestSupport.canRun,
+                   "Needs python3 + repo scripts/ + a source DB (set FKR_TEST_DB to override)."))
+    func targetedDeleteAbortsWhenTheRowChangedSinceThePlan() async throws {
+        let env = try BridgeTestSupport.makeSandbox()
+        defer { env.cleanup() }
+
+        let importer = AppleDatabaseImporter(bridge: env.bridge)
+        let writer = AppleDatabaseWriter(bridge: env.bridge, backupDirectory: env.backupDir)
+
+        let shortcut = "zz_stale_\(Int.random(in: 100_000...999_999))"
+        let before = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+        #expect(try writer.apply(before + [Replacement(shortcut: shortcut, phrase: "original")],
+                                 strategy: .merge).applied)
+        let withRow = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+
+        // A fingerprint for a phrase that is NOT what is on disk — i.e. the row moved under us.
+        let stale = ReplacementDeleteTarget(
+            shortcut: shortcut,
+            fingerprint: Replacement(shortcut: shortcut, phrase: "something else").nativeFingerprint
+        )
+        let survivors = withRow.filter { $0.shortcut != shortcut }
+
+        #expect(throws: (any Error).self) {
+            try writer.apply(survivors, strategy: .merge, deletes: [stale])
+        }
+
+        // And the abort must be total — the row is still there.
+        let after = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+        #expect(after.contains { $0.shortcut == shortcut })
+        #expect(after.count == withRow.count)
+    }
+
+    /// A target that no longer exists aborts too, rather than silently succeeding as a no-op.
+    @Test(.enabled(if: BridgeTestSupport.canRun,
+                   "Needs python3 + repo scripts/ + a source DB (set FKR_TEST_DB to override)."))
+    func targetedDeleteAbortsWhenTheTargetIsMissing() async throws {
+        let env = try BridgeTestSupport.makeSandbox()
+        defer { env.cleanup() }
+
+        let importer = AppleDatabaseImporter(bridge: env.bridge)
+        let writer = AppleDatabaseWriter(bridge: env.bridge, backupDirectory: env.backupDir)
+        let library = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+
+        let ghost = ReplacementDeleteTarget(
+            shortcut: "zz_ghost_\(Int.random(in: 100_000...999_999))", fingerprint: "deadbeef"
+        )
+        #expect(throws: (any Error).self) {
+            try writer.apply(library, strategy: .merge, deletes: [ghost])
+        }
+
+        let after = try await importer.importReplacements(request: .init(source: .appleDatabase)).imported
+        #expect(after.count == library.count)
+    }
+
 // MARK: - Gating + sandbox
 
 enum BridgeTestSupport {

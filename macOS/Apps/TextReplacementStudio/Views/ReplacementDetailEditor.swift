@@ -15,17 +15,19 @@ struct ReplacementDetailEditor: View {
     @State private var copied = false
 
     var body: some View {
-        if let index = model.index(of: replacementID) {
-            let issues = model.issues(for: replacementID)
+        if let id = replacementID, let row = model.replacement(id) {
+            let issues = model.issues(for: id)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    header(index, issues: issues.filter { $0.code.hasPrefix("shortcut") })
+                    if row.isPendingDeletion { pendingDeletionBanner(id) }
+                    header(id, issues: issues.filter { $0.code.hasPrefix("shortcut") })
                     Spacer().frame(height: 26)
-                    phraseSection(index, issues: issues.filter { $0.code.hasPrefix("phrase") })
+                    phraseSection(id, issues: issues.filter { $0.code.hasPrefix("phrase") })
                     Spacer().frame(height: 18)
-                    groupRow(index)
-                    notesRow(index)
+                    groupRow(id)
+                    notesRow(id)
                 }
+                .disabled(row.isPendingDeletion)
                 .padding(.horizontal, 32)
                 .padding(.vertical, 26)
             }
@@ -46,18 +48,43 @@ struct ReplacementDetailEditor: View {
 
     /// Drop the cursor into the shortcut field when a freshly-added (blank) row is shown.
     private func focusIfBlank() {
-        guard let i = model.index(of: replacementID), model.replacements[i].shortcut.isEmpty
-        else { return }
+        guard let row = model.replacement(replacementID), row.shortcut.isEmpty else { return }
         shortcutFocused = true
+    }
+
+    /// Shown in place of editing when a row is staged for removal. This banner is the reason
+    /// deletion is a flag rather than a removal: the row is still here, so there is somewhere to
+    /// put Restore without building an undo stack (GH-2 gotcha 16).
+    private func pendingDeletionBanner(_ id: Replacement.ID) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "trash")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.diffRemove)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Staged for deletion").font(Theme.bodyMed).foregroundStyle(Theme.text)
+                Text("Removed from macOS on the next Apply. Nothing has been deleted yet.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.text2)
+            }
+            Spacer()
+            Button("Restore") { model.restoreReplacement(id) }
+                .buttonStyle(.bordered)
+        }
+        .padding(12)
+        .background(Theme.diffRemove.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Theme.diffRemove.opacity(0.45), lineWidth: 1)
+        )
+        .padding(.bottom, 20)
     }
 
     // MARK: Header — shortcut + enabled
 
-    private func header(_ index: Int, issues: [ReplacementValidationIssue]) -> some View {
+    private func header(_ id: Replacement.ID, issues: [ReplacementValidationIssue]) -> some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 9) {
                 caption("SHORTCUT")
-                TextField("shortcut", text: stringBinding(index, \.shortcut))
+                TextField("shortcut", text: stringBinding(id, \.shortcut))
                     .textFieldStyle(.plain)
                     .font(.system(size: 17, design: .monospaced).weight(.medium))
                     .foregroundStyle(Theme.text)
@@ -76,7 +103,7 @@ struct ReplacementDetailEditor: View {
             Spacer()
             HStack(spacing: 10) {
                 Text("Enabled").font(Theme.bodyMed).foregroundStyle(Theme.text2)
-                StudioToggle(isOn: boolBinding(index, \.enabled), controlSize: .regular)
+                StudioToggle(isOn: boolBinding(id, \.enabled), controlSize: .regular)
             }
             .padding(.top, 27)
         }
@@ -84,8 +111,8 @@ struct ReplacementDetailEditor: View {
 
     // MARK: Phrase
 
-    private func phraseSection(_ index: Int, issues: [ReplacementValidationIssue]) -> some View {
-        let phrase = model.replacements[index].phrase
+    private func phraseSection(_ id: Replacement.ID, issues: [ReplacementValidationIssue]) -> some View {
+        let phrase = model.replacement(id)?.phrase ?? ""
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 caption("EXPANDED PHRASE")
@@ -109,7 +136,7 @@ struct ReplacementDetailEditor: View {
                     copied = false
                 }
             }
-            TextEditor(text: stringBinding(index, \.phrase))
+            TextEditor(text: stringBinding(id, \.phrase))
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.text)
                 .lineSpacing(4)
@@ -153,11 +180,11 @@ struct ReplacementDetailEditor: View {
 
     // MARK: Group
 
-    private func groupRow(_ index: Int) -> some View {
+    private func groupRow(_ id: Replacement.ID) -> some View {
         HStack {
             Text("Group").font(Theme.bodyMed).foregroundStyle(Theme.text2)
             Spacer()
-            Picker("Group", selection: groupBinding(index)) {
+            Picker("Group", selection: groupBinding(id)) {
                 Text("Ungrouped").tag(Self.noneTag)
                 Divider()
                 ForEach(model.groups) { g in
@@ -168,7 +195,7 @@ struct ReplacementDetailEditor: View {
                     .tag(g.name)
                 }
                 // Allow keeping a group that has only this (new) member.
-                let current = model.replacements[index].groupName ?? ""
+                let current = model.replacement(id)?.groupName ?? ""
                 if !current.isEmpty, !model.groups.contains(where: { $0.name == current }) {
                     Text(current).tag(current)
                 }
@@ -184,11 +211,11 @@ struct ReplacementDetailEditor: View {
 
     // MARK: Notes
 
-    private func notesRow(_ index: Int) -> some View {
+    private func notesRow(_ id: Replacement.ID) -> some View {
         HStack(alignment: .top, spacing: 20) {
             Text("Notes").font(Theme.bodyMed).foregroundStyle(Theme.text2)
             Spacer()
-            TextField("Add a note…", text: optionalBinding(index, \.notes), axis: .vertical)
+            TextField("Add a note…", text: optionalBinding(id, \.notes), axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.text)
@@ -224,48 +251,56 @@ struct ReplacementDetailEditor: View {
         .background(Theme.window)
     }
 
-    // MARK: Bindings (resolve the row by id each time so edits survive reordering)
+    // MARK: Bindings
+    //
+    // Every binding resolves its row by **id**, at get and at set. These used to capture an `Int`
+    // index (while the comment here claimed otherwise). That is safe only while the array never
+    // shrinks: once a row can be removed, a stale index silently addresses the neighbour and the
+    // write lands on the wrong replacement — no crash, no error (GH-2 gotcha 3).
 
-    private func stringBinding(_ index: Int, _ keyPath: WritableKeyPath<Replacement, String>) -> Binding<String> {
+    private func write(_ id: Replacement.ID, _ mutate: (inout Replacement) -> Void) {
+        guard let i = model.index(of: id) else { return }
+        mutate(&model.replacements[i])
+        model.touch(id)
+    }
+
+    private func read<T>(_ id: Replacement.ID, _ fallback: T, _ get: (Replacement) -> T) -> T {
+        guard let i = model.index(of: id) else { return fallback }
+        return get(model.replacements[i])
+    }
+
+    private func stringBinding(_ id: Replacement.ID, _ keyPath: WritableKeyPath<Replacement, String>) -> Binding<String> {
         Binding(
-            get: { MainActor.assumeIsolated { model.replacements[index][keyPath: keyPath] } },
-            set: { value in MainActor.assumeIsolated {
-                model.replacements[index][keyPath: keyPath] = value
-                model.touch(index)
-            } }
+            get: { MainActor.assumeIsolated { read(id, "") { $0[keyPath: keyPath] } } },
+            set: { value in MainActor.assumeIsolated { write(id) { $0[keyPath: keyPath] = value } } }
         )
     }
 
-    private func boolBinding(_ index: Int, _ keyPath: WritableKeyPath<Replacement, Bool>) -> Binding<Bool> {
+    private func boolBinding(_ id: Replacement.ID, _ keyPath: WritableKeyPath<Replacement, Bool>) -> Binding<Bool> {
         Binding(
-            get: { MainActor.assumeIsolated { model.replacements[index][keyPath: keyPath] } },
-            set: { value in MainActor.assumeIsolated {
-                model.replacements[index][keyPath: keyPath] = value
-                model.touch(index)
-            } }
+            get: { MainActor.assumeIsolated { read(id, false) { $0[keyPath: keyPath] } } },
+            set: { value in MainActor.assumeIsolated { write(id) { $0[keyPath: keyPath] = value } } }
         )
     }
 
-    private func optionalBinding(_ index: Int, _ keyPath: WritableKeyPath<Replacement, String?>) -> Binding<String> {
+    private func optionalBinding(_ id: Replacement.ID, _ keyPath: WritableKeyPath<Replacement, String?>) -> Binding<String> {
         Binding(
-            get: { MainActor.assumeIsolated { model.replacements[index][keyPath: keyPath] ?? "" } },
+            get: { MainActor.assumeIsolated { read(id, "") { $0[keyPath: keyPath] ?? "" } } },
             set: { value in MainActor.assumeIsolated {
-                model.replacements[index][keyPath: keyPath] = value.isEmpty ? nil : value
-                model.touch(index)
+                write(id) { $0[keyPath: keyPath] = value.isEmpty ? nil : value }
             } }
         )
     }
 
     /// String-keyed binding for the Group picker; the sentinel maps to `nil`.
-    private func groupBinding(_ index: Int) -> Binding<String> {
+    private func groupBinding(_ id: Replacement.ID) -> Binding<String> {
         Binding(
             get: { MainActor.assumeIsolated {
-                let g = model.replacements[index].groupName ?? ""
+                let g = read(id, "") { $0.groupName ?? "" }
                 return g.isEmpty ? Self.noneTag : g
             } },
             set: { value in MainActor.assumeIsolated {
-                model.replacements[index].groupName = value == Self.noneTag ? nil : value
-                model.touch(index)
+                write(id) { $0.groupName = (value == Self.noneTag) ? nil : value }
             } }
         )
     }

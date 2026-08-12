@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Remembers per-replacement `createdAt` / `updatedAt` across launches.
@@ -174,17 +173,10 @@ public actor ReplacementTimestampStore {
         shortcut.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    /// Stable across launches, unlike `Hasher` (which is seeded per process).
+    /// Delegates to `Replacement.contentFingerprint`, which is the same canonical string and hash
+    /// this file used to compute inline — kept byte-identical so sidecars written by earlier builds
+    /// still match and do not read as a library-wide "changed".
     private static func fingerprint(_ replacement: Replacement) -> String {
-        let canonical = [
-            replacement.normalizedShortcut,
-            replacement.phrase,
-            replacement.enabled ? "1" : "0",
-            replacement.groupName ?? "",
-            replacement.notes ?? "",
-        ].joined(separator: "\u{0}")
-        return SHA256.hash(data: Data(canonical.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
+        replacement.contentFingerprint
     }
 }

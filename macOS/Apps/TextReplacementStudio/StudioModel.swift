@@ -17,6 +17,10 @@ final class StudioModel {
     var isBusy = false
     /// Set after a successful Apply; shown in the sidebar footer.
     var lastAppliedAt: Date?
+    /// Whether a real import has happened. Distinct from `!replacements.isEmpty` on purpose:
+    /// deleting your last replacement leaves a legitimately empty library that must still be
+    /// appliable, and the old `replacements.isEmpty` guard made that impossible (GH-2 gotcha 9).
+    var hasImported = false
     /// Transient feedback shown as a bottom overlay capsule.
     var toast: ToastMessage?
     /// Push strategy — Merge (add/update) or Replace (add/update/remove).
@@ -46,6 +50,7 @@ final class StudioModel {
             let stamped = await timestamps.reconcile(imported)
             replacements = stamped
             importedBaseline = stamped
+            hasImported = true
             statusText = "Imported \(stamped.count) replacements from the live macOS database."
             showToast(.init(text: "Imported \(stamped.count) replacements", style: .success))
         } catch {
@@ -56,19 +61,20 @@ final class StudioModel {
     }
 
     func pushToMacOS(strategy: AppleDatabaseWriter.Strategy, write: Bool) async {
-        guard !replacements.isEmpty else {
+        guard hasImported else {
             statusText = "Nothing to push — import first."
             return
         }
         isBusy = true
         statusText = write ? "Applying to the live macOS database…" : "Computing dry-run plan…"
         let items = replacements
+        let targets = deleteTargets
         do {
             let outcome = try await Task.detached(priority: .userInitiated) {
                 let writer = try AppleDatabaseWriter()
                 return write
-                    ? try writer.apply(items, strategy: strategy)
-                    : try writer.plan(items, strategy: strategy)
+                    ? try writer.apply(items, strategy: strategy, deletes: targets)
+                    : try writer.plan(items, strategy: strategy, deletes: targets)
             }.value
             let header = outcome.applied
                 ? "Applied to macOS (strategy=\(strategy.rawValue)). Quit/reopen System Settings & affected apps to see changes."
@@ -76,10 +82,14 @@ final class StudioModel {
             statusText = header + "\n" + outcome.output
             if write {
                 lastAppliedAt = Date()
-                importedBaseline = items          // edits are now the on-disk truth
+                // The staged rows are gone from the database now, so drop them from the library
+                // too. This is the one moment rows really leave the array (GH-2 gotchas 4, 11).
+                let survivors = items.filter { !$0.isPendingDeletion }
+                replacements = survivors
+                importedBaseline = survivors      // edits are now the on-disk truth
                 // Re-baseline the sidecar's fingerprints against what we just wrote, so a later
                 // launch doesn't read our own apply as an edit made outside the app.
-                await timestamps.reconcile(items)
+                await timestamps.reconcile(survivors)
                 showToast(.init(text: "Applied to macOS — quit & reopen apps to see changes",
                                 style: .success))
             }
@@ -97,18 +107,91 @@ final class StudioModel {
         return replacements.firstIndex { $0.id == id }
     }
 
+    /// Read a row by id. Views resolve through this rather than holding an array position.
+    func replacement(_ id: Replacement.ID?) -> Replacement? {
+        guard let i = index(of: id) else { return nil }
+        return replacements[i]
+    }
+
     func toggleEnabled(_ id: Replacement.ID) {
         guard let i = index(of: id) else { return }
         replacements[i].enabled.toggle()
-        touch(i)
+        touch(id)
     }
 
     /// Stamp a row as edited now and schedule the debounced sidecar write. Every mutation
     /// path goes through here so "Recently Changed" can't silently miss one.
-    func touch(_ index: Int) {
-        guard replacements.indices.contains(index) else { return }
-        replacements[index].updatedAt = Date()
+    ///
+    /// Resolved by id, never by array position. The previous `touch(_ index: Int)` overload was
+    /// removed rather than kept alongside this one: its `indices.contains` bounds check prevented
+    /// the crash and thereby *guaranteed* the quieter bug — after a row is removed, a stale index
+    /// addresses a different row and the write lands on the neighbour (GH-2 gotcha 3).
+    func touch(_ id: Replacement.ID) {
+        guard let i = index(of: id) else { return }
+        replacements[i].updatedAt = Date()
         scheduleTimestampSave()
+    }
+
+    // MARK: - Deletion (staged; nothing leaves the library until Apply)
+
+    /// Stage a row for removal, or discard it outright if it was never on disk.
+    ///
+    /// A row the database has never seen has nothing to delete *from* — staging it would emit a
+    /// delete target the writer would then refuse as "no active row with that shortcut". So a
+    /// never-applied row is simply dropped (GH-2 gotcha 11).
+    func deleteReplacement(_ id: Replacement.ID) {
+        guard let i = index(of: id) else { return }
+        let isOnDisk = importedBaseline.contains { $0.id == replacements[i].id }
+        if isOnDisk {
+            replacements[i].isPendingDeletion = true
+            touch(id)
+        } else {
+            replacements.remove(at: i)
+            scheduleTimestampSave()
+        }
+    }
+
+    /// Un-stage a pending deletion. Cheap because the row never left the array — which is exactly
+    /// why deletion is modelled as a flag and not a removal.
+    func restoreReplacement(_ id: Replacement.ID) {
+        guard let i = index(of: id), replacements[i].isPendingDeletion else { return }
+        replacements[i].isPendingDeletion = false
+        touch(id)
+    }
+
+    var pendingDeletions: [Replacement] { replacements.filter(\.isPendingDeletion) }
+
+    /// Everything Apply must remove, from the two sources that can produce a removal.
+    ///
+    /// The second source is the subtle one: the writer keys by shortcut and discards our ids, so a
+    /// *rename* it isn't told about reads as an unrelated add and silently leaves the old row
+    /// behind. Emitting the before-shortcut turns a rename into delete-old + add-new
+    /// (GH-2 gotchas 10, 15).
+    var deleteTargets: [ReplacementDeleteTarget] {
+        let baselineByID = Dictionary(uniqueKeysWithValues: importedBaseline.map { ($0.id, $0) })
+        var targets: [String: ReplacementDeleteTarget] = [:]
+
+        for row in replacements {
+            guard let original = baselineByID[row.id] else { continue }
+            if row.isPendingDeletion {
+                targets[original.normalizedShortcut] = .init(
+                    shortcut: original.normalizedShortcut, fingerprint: original.nativeFingerprint
+                )
+            } else if original.normalizedShortcut != row.normalizedShortcut {
+                targets[original.normalizedShortcut] = .init(
+                    shortcut: original.normalizedShortcut, fingerprint: original.nativeFingerprint
+                )
+            }
+        }
+
+        // A shortcut that has been re-used by a surviving row is not a deletion — the writer would
+        // reject the payload as self-contradictory (present in both items and deletes).
+        let liveShortcuts = Set(
+            replacements.filter { !$0.isPendingDeletion }.map(\.normalizedShortcut)
+        )
+        return targets.values
+            .filter { !liveShortcuts.contains($0.shortcut) }
+            .sorted { $0.shortcut < $1.shortcut }
     }
 
     /// Coalesce the sidecar write — the phrase editor's binding fires on every keystroke.
@@ -199,14 +282,21 @@ final class StudioModel {
 
     // MARK: - Preview diff (current edits vs. the imported baseline)
 
+    /// What Apply would change, diffed against the last import.
+    ///
+    /// Pending deletions are the tricky part. They stay in `replacements`, so they are NOT missing
+    /// from the id set — dropping the old `strategy == .replace` gate alone would have let them
+    /// fall silently into `updates` and shown the user the wrong plan. They have to be pulled out
+    /// explicitly, before the add/update bucketing runs (GH-2 gotcha 14).
     func planDiff(strategy: AppleDatabaseWriter.Strategy) -> PlanDiff {
         let baselineByID = Dictionary(uniqueKeysWithValues: importedBaseline.map { ($0.id, $0) })
-        let currentIDs = Set(replacements.map(\.id))
+        let surviving = replacements.filter { !$0.isPendingDeletion }
+        let survivingIDs = Set(surviving.map(\.id))
 
         var adds: [Replacement] = []
         var updates: [ReplacementUpdate] = []
         var unchanged = 0
-        for r in replacements {
+        for r in surviving {
             if let original = baselineByID[r.id] {
                 if original.contentEquals(r) { unchanged += 1 }
                 else { updates.append(.init(before: original, after: r)) }
@@ -214,10 +304,16 @@ final class StudioModel {
                 adds.append(r)
             }
         }
-        // Removes only take effect under the Replace strategy.
-        let removes = strategy == .replace
-            ? importedBaseline.filter { !currentIDs.contains($0.id) }
-            : []
+
+        // Staged deletions count under BOTH strategies — that is what makes Merge able to remove a
+        // single row. Replace additionally sweeps anything the baseline had and we no longer do.
+        var removes = replacements.filter(\.isPendingDeletion).compactMap { baselineByID[$0.id] }
+        if strategy == .replace {
+            let alreadyRemoved = Set(removes.map(\.id))
+            removes += importedBaseline.filter {
+                !survivingIDs.contains($0.id) && !alreadyRemoved.contains($0.id)
+            }
+        }
         return PlanDiff(adds: adds, updates: updates, removes: removes, unchanged: unchanged)
     }
 }

@@ -18,16 +18,24 @@ struct ReplacementRow: View {
 
             Text(replacement.phrase)
                 .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                .foregroundStyle(replacement.enabled ? Theme.text : Theme.text3)
+                .foregroundStyle(phraseColor)
+                .strikethrough(replacement.isPendingDeletion, color: Theme.diffRemove)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let group = replacement.groupName, !group.isEmpty {
+            if replacement.isPendingDeletion {
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.diffRemove)
+                    .help("Staged for deletion on the next Apply")
+            } else if let group = replacement.groupName, !group.isEmpty {
                 GroupTag(name: group)
             }
 
+            // A staged row is on its way out; toggling Enabled on it would be meaningless.
             StudioToggle(isOn: $isEnabled, controlSize: .mini)
+                .disabled(replacement.isPendingDeletion)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -37,9 +45,19 @@ struct ReplacementRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onHover { hovering = $0 }
+        .opacity(replacement.isPendingDeletion ? 0.55 : 1)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(replacement.shortcut), \(replacement.phrase)")
+        .accessibilityLabel(
+            replacement.isPendingDeletion
+                ? "\(replacement.shortcut), \(replacement.phrase), staged for deletion"
+                : "\(replacement.shortcut), \(replacement.phrase)"
+        )
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    private var phraseColor: Color {
+        if replacement.isPendingDeletion { return Theme.text3 }
+        return replacement.enabled ? Theme.text : Theme.text3
     }
 
     @ViewBuilder private var rowBackground: some View {
