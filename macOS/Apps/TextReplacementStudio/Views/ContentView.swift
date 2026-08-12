@@ -14,6 +14,16 @@ extension FocusedValues {
 /// Exposes ContentView's "apply" action to the menu bar so File ▸ Apply to macOS (⌘S)
 /// drives the same confirmation path as the toolbar button. Published as nil while the
 /// action isn't available, which is what greys the menu item out.
+/// Exposes the list's delete/restore action to the menu bar so Edit ▸ Delete Replacement (⌘⌫)
+/// drives the same code path as the footer button and the ⌫ key.
+struct DeleteReplacementKey: FocusedValueKey { typealias Value = () -> Void }
+extension FocusedValues {
+    var deleteReplacement: (() -> Void)? {
+        get { self[DeleteReplacementKey.self] }
+        set { self[DeleteReplacementKey.self] = newValue }
+    }
+}
+
 struct ApplyToMacOSKey: FocusedValueKey { typealias Value = () -> Void }
 extension FocusedValues {
     var applyToMacOS: (() -> Void)? {
@@ -87,6 +97,10 @@ struct ContentView: View {
         .tint(Theme.accent)
         .toolbar { toolbarContent }
         .focusedValue(\.newReplacement, newReplacement)
+        .focusedValue(\.deleteReplacement, selectedReplacementID == nil ? nil : {
+            guard let id = selectedReplacementID, let row = model.replacement(id) else { return }
+            row.isPendingDeletion ? model.restoreReplacement(id) : model.deleteReplacement(id)
+        })
         .focusedValue(\.applyToMacOS, canApply ? { confirmApply = true } : nil)
         .overlay(alignment: .bottom) { toastOverlay }
         .task {

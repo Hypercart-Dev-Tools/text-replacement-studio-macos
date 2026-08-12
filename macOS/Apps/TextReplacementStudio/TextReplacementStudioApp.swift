@@ -25,6 +25,12 @@ struct TextReplacementStudioApp: App {
             CommandGroup(replacing: .saveItem) {
                 ApplyToMacOSCommand()
             }
+            // Deletion belongs in Edit, next to the standard editing verbs, with the ⌘⌫ that
+            // macOS users already reach for.
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                DeleteReplacementCommand()
+            }
             CommandGroup(replacing: .appInfo) {
                 AboutCommand()
             }
@@ -60,6 +66,18 @@ private struct NewReplacementCommand: View {
         Button("New Replacement") { add?() }
             .keyboardShortcut("n", modifiers: .command)
             .disabled(add == nil)
+    }
+}
+
+/// Edit ▸ Delete Replacement (⌘⌫). Greyed out when nothing is selected. Shares the list's single
+/// delete entry point, so the menu, the footer button and the ⌫ key cannot disagree.
+private struct DeleteReplacementCommand: View {
+    @FocusedValue(\.deleteReplacement) private var delete
+
+    var body: some View {
+        Button("Delete Replacement") { delete?() }
+            .keyboardShortcut(.delete, modifiers: .command)
+            .disabled(delete == nil)
     }
 }
 

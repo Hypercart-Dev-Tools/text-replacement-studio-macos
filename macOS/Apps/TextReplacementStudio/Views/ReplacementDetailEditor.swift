@@ -20,14 +20,18 @@ struct ReplacementDetailEditor: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if row.isPendingDeletion { pendingDeletionBanner(id) }
-                    header(id, issues: issues.filter { $0.code.hasPrefix("shortcut") })
-                    Spacer().frame(height: 26)
-                    phraseSection(id, issues: issues.filter { $0.code.hasPrefix("phrase") })
-                    Spacer().frame(height: 18)
-                    groupRow(id)
-                    notesRow(id)
+                    Group {
+                        header(id, issues: issues.filter { $0.code.hasPrefix("shortcut") })
+                        Spacer().frame(height: 26)
+                        phraseSection(id, issues: issues.filter { $0.code.hasPrefix("phrase") })
+                        Spacer().frame(height: 18)
+                        groupRow(id)
+                        notesRow(id)
+                    }
+                    .disabled(row.isPendingDeletion)
+
+                    if !row.isPendingDeletion { deleteRow(id) }
                 }
-                .disabled(row.isPendingDeletion)
                 .padding(.horizontal, 32)
                 .padding(.vertical, 26)
             }
@@ -207,6 +211,29 @@ struct ReplacementDetailEditor: View {
         }
         .padding(.vertical, 11)
         .overlay(Rectangle().fill(Theme.separator).frame(height: 1), alignment: .top)
+    }
+
+    // MARK: Delete
+
+    /// The visible, always-present way to remove a replacement. The first cut of this feature
+    /// shipped with only a right-click context menu, which is effectively invisible — a delete
+    /// nobody can find is a delete that does not exist.
+    private func deleteRow(_ id: Replacement.ID) -> some View {
+        HStack {
+            Button(role: .destructive) {
+                model.deleteReplacement(id)
+            } label: {
+                Label("Delete Replacement", systemImage: "trash")
+                    .foregroundStyle(Theme.diffRemove)
+            }
+            .buttonStyle(.bordered)
+            .help("Stage this replacement for deletion (⌘⌫). Nothing is removed until you Apply.")
+            Spacer()
+            Text("Removed from macOS on Apply")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.text3)
+        }
+        .padding(.top, 22)
     }
 
     // MARK: Notes

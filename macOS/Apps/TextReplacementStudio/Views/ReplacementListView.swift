@@ -86,7 +86,7 @@ struct ReplacementListView: View {
                                 replacement: r,
                                 isSelected: selectedReplacementID == r.id,
                                 isEnabled: enabledBinding(for: r),
-                                onSelect: { selectedReplacementID = r.id }
+                                onSelect: { selectedReplacementID = r.id; listFocused = true }
                             )
                             .id(r.id)
                             .contextMenu {
@@ -106,11 +106,7 @@ struct ReplacementListView: View {
                 .onTapGesture { listFocused = true }
                 // Scoped to list focus on purpose: unscoped, this would fire mid-word in the
                 // phrase editor or the search field.
-                .onDeleteCommand {
-                    guard listFocused, let id = selectedReplacementID,
-                          let row = model.replacement(id) else { return }
-                    row.isPendingDeletion ? onRestore(id) : onDelete(id)
-                }
+                .onDeleteCommand { if listFocused { deleteOrRestoreSelection() } }
                 .onChange(of: rows.map(\.id)) {
                     guard let id = selectedReplacementID else { return }
                     withAnimation(Theme.spring) { proxy.scrollTo(id) }
@@ -187,6 +183,22 @@ struct ReplacementListView: View {
                 .fixedSize()
                 .help("Sort: \(model.sortOrder.label)")
                 .accessibilityLabel("Sort replacements, currently \(model.sortOrder.label)")
+                Button(action: deleteOrRestoreSelection) {
+                    Image(systemName: selectionIsPendingDeletion ? "arrow.uturn.backward" : "trash")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(selectedReplacementID == nil
+                                         ? Theme.text3
+                                         : (selectionIsPendingDeletion ? Theme.text2 : Theme.diffRemove))
+                        .frame(width: 24, height: 24)
+                        .background(Theme.hover, in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedReplacementID == nil)
+                .help(selectionIsPendingDeletion
+                      ? "Restore this replacement"
+                      : "Delete the selected replacement (⌘⌫)")
+                .accessibilityLabel(selectionIsPendingDeletion ? "Restore replacement" : "Delete replacement")
+
                 Button(action: onAdd) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .medium))
@@ -204,6 +216,17 @@ struct ReplacementListView: View {
     }
 
     // MARK: Actions
+
+    private var selectionIsPendingDeletion: Bool {
+        model.replacement(selectedReplacementID)?.isPendingDeletion ?? false
+    }
+
+    /// One entry point for every delete affordance, so the footer button, ⌫ and the menu item
+    /// cannot drift apart.
+    func deleteOrRestoreSelection() {
+        guard let id = selectedReplacementID, let row = model.replacement(id) else { return }
+        row.isPendingDeletion ? onRestore(id) : onDelete(id)
+    }
 
     private func enabledBinding(for r: Replacement) -> Binding<Bool> {
         Binding(
