@@ -240,35 +240,30 @@ final class StudioModel {
             .sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
     }
 
-    func count(for filter: ReplacementFilter) -> Int { filteredUnsorted(filter, search: "").count }
+    func count(for filter: ReplacementFilter) -> Int { filteredUnsorted(filter).count }
 
-    /// Rows for the middle list: the active filter narrowed by the search query, sorted by `sortOrder`.
+    /// Rows for the middle list: the active filter narrowed by the search query, sorted by
+    /// `sortOrder`. Search matching and shortcut-first ranking are `matchingSearch` — see there.
     func filtered(_ filter: ReplacementFilter, search: String) -> [Replacement] {
-        filteredUnsorted(filter, search: search).sorted(order: sortOrder)
+        filteredUnsorted(filter).sorted(order: sortOrder).matchingSearch(search)
     }
 
-    private func filteredUnsorted(_ filter: ReplacementFilter, search: String) -> [Replacement] {
-        let base: [Replacement]
+    private func filteredUnsorted(_ filter: ReplacementFilter) -> [Replacement] {
         switch filter {
         case .all:
-            base = replacements
+            return replacements
         case .disabled:
-            base = replacements.filter { !$0.enabled }
+            return replacements.filter { !$0.enabled }
         case .ungrouped:
-            base = replacements.filter { ($0.groupName ?? "").isEmpty }
+            return replacements.filter { ($0.groupName ?? "").isEmpty }
         case .recentlyChanged:
             let now = Date()
-            base = replacements.filter { $0.isRecentlyChanged(now: now) }
+            return replacements.filter { $0.isRecentlyChanged(now: now) }
         case .duplicates:
             let dupes = duplicateShortcuts
-            base = replacements.filter { dupes.contains($0.normalizedShortcut.lowercased()) }
+            return replacements.filter { dupes.contains($0.normalizedShortcut.lowercased()) }
         case .group(let name):
-            base = replacements.filter { $0.groupName == name }
-        }
-        guard !search.isEmpty else { return base }
-        return base.filter {
-            $0.shortcut.localizedCaseInsensitiveContains(search)
-                || $0.phrase.localizedCaseInsensitiveContains(search)
+            return replacements.filter { $0.groupName == name }
         }
     }
 

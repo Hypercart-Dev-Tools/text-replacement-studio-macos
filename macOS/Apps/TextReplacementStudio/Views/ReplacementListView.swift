@@ -107,8 +107,18 @@ struct ReplacementListView: View {
                 // Scoped to list focus on purpose: unscoped, this would fire mid-word in the
                 // phrase editor or the search field.
                 .onDeleteCommand { if listFocused { deleteOrRestoreSelection() } }
+                // Scoped to a non-empty query on purpose: a new search should always jump to the
+                // top of its own results, not inherit whatever scroll offset the full list had.
+                // Deferred a tick because scrollTo can silently no-op against a LazyVStack row
+                // that hasn't been laid out yet in this same update cycle (GH-debug-mantra).
+                .onChange(of: searchText) {
+                    guard !searchText.isEmpty, let firstID = rows.first?.id else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(Theme.spring) { proxy.scrollTo(firstID, anchor: .top) }
+                    }
+                }
                 .onChange(of: rows.map(\.id)) {
-                    guard let id = selectedReplacementID else { return }
+                    guard searchText.isEmpty, let id = selectedReplacementID else { return }
                     withAnimation(Theme.spring) { proxy.scrollTo(id) }
                 }
             }
