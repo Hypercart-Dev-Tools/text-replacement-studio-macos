@@ -42,6 +42,27 @@ swift build
 > `sandbox-exec`, and a nested sandbox can't apply inside another one) — not a problem with
 > this package. Run the build outside the agent's sandbox.
 
+## When Apply or Import fails
+
+The app never reports a bare "Apply failed". Every failure is shown as **what didn't happen, why,
+and what to do**, and an error toast stays on screen until dismissed:
+
+- **Incomplete rows are caught before anything is written.** `ReplacementApplyPreflight` runs the
+  writer's own three rules (empty shortcut, empty phrase, duplicate shortcut) in Swift first, names
+  the offending row, and offers **Show Me** to select it. macOS rejects the whole batch if any row
+  is incomplete, so this is reported instead of the confirmation dialog — you are not walked through
+  "write to your live database?" for a batch that was always going to be refused.
+- **Everything else is translated by `ReplacementFailureExplainer`.** Subprocess chrome
+  (`json_to_apple_sqlite.py failed (exit 1): error: …`) is stripped, and SQLite/OS-level causes are
+  rewritten into an action: a locked database says to quit System Settings, a read-only one points
+  at Full Disk Access, a missing one explains that macOS creates it only after your first
+  replacement. The Python writer's own messages are already plain English and are kept verbatim
+  with a fix line added.
+- **Unrecognized failures are passed through, not guessed at**, with **Copy Details** on the toast
+  carrying the unedited technical text for a bug report.
+
+Both types live in `TextReplacementCore` and are covered by `ReplacementFailureMessagingTests`.
+
 ## Run the CLI
 
 ```bash

@@ -33,6 +33,9 @@ and lists your current replacements; `replacements.json` contains your exported 
 Optionally run the test suite: `cd macOS && swift test`.
 
 **Troubleshooting:**
+- The app refuses to apply, or an import fails — read the error toast: it names the cause and the
+  fix (an incomplete row, a locked database, missing Full Disk Access), and **Copy Details** carries
+  the raw message. See [When Apply or Import fails](macOS/README.md#when-apply-or-import-fails).
 - `swift build` fails with `fatal: cannot use bare repository … (safe.bareRepository is 'explicit')`
   or a similarly cryptic manifest error — see the note in [macOS/README.md](macOS/README.md#build--develop).
 - Running under an AI coding agent, `swift build` fails with `error: 'macos': Invalid manifest`

@@ -13,7 +13,6 @@ final class StudioModel {
     /// Snapshot of the live macOS DB taken at the last import/apply. Edits are diffed against
     /// this for the Preview Plan sheet and the "recently changed" filter.
     var importedBaseline: [Replacement] = []
-    var statusText: String = "Import your replacements from macOS to begin."
     var isBusy = false
     /// Set after a successful Apply; shown in the sidebar footer.
     var lastAppliedAt: Date?
@@ -23,6 +22,8 @@ final class StudioModel {
     var hasImported = false
     /// Transient feedback shown as a bottom overlay capsule.
     var toast: ToastMessage?
+    /// Unedited text of the most recent failure, kept for the toast's Copy Details action.
+    var lastFailureDetail: String?
     /// Push strategy — Merge (add/update) or Replace (add/update/remove).
     var strategy: AppleDatabaseWriter.Strategy = .merge
     /// How the middle list is ordered — default preserves import/insertion order.
@@ -39,7 +40,6 @@ final class StudioModel {
 
     func importFromMacOS() async {
         isBusy = true
-        statusText = "Importing from the live macOS database…"
         do {
             let imported = try await Task.detached(priority: .userInitiated) {
                 try await AppleDatabaseImporter().importReplacements(
@@ -51,22 +51,27 @@ final class StudioModel {
             replacements = stamped
             importedBaseline = stamped
             hasImported = true
-            statusText = "Imported \(stamped.count) replacements from the live macOS database."
             showToast(.init(text: "Imported \(stamped.count) replacements", style: .success))
         } catch {
-            statusText = "Import failed: \(error.localizedDescription)"
-            showToast(.init(text: "Import failed", style: .error, action: .retryImport))
+            report(error, during: .importing, retry: .retryImport)
         }
         isBusy = false
     }
 
     func pushToMacOS(strategy: AppleDatabaseWriter.Strategy, write: Bool) async {
         guard hasImported else {
-            statusText = "Nothing to push — import first."
+            showToast(.init(
+                text: "Nothing to apply yet",
+                detail: "Import your replacements from macOS first — there is no baseline to compare your edits against.",
+                style: .error,
+                action: .retryImport
+            ))
             return
         }
+        // The writer would reject an incomplete row as a subprocess exiting 1, which is where
+        // "Apply failed" came from. Catch it here, where the offending row can still be named.
+        if write, reportApplyBlockers() { return }
         isBusy = true
-        statusText = write ? "Applying to the live macOS database…" : "Computing dry-run plan…"
         let items = replacements
         let targets = deleteTargets
         do {
@@ -76,10 +81,13 @@ final class StudioModel {
                     ? try writer.apply(items, strategy: strategy, deletes: targets)
                     : try writer.plan(items, strategy: strategy, deletes: targets)
             }.value
-            let header = outcome.applied
-                ? "Applied to macOS (strategy=\(strategy.rawValue)). Quit/reopen System Settings & affected apps to see changes."
-                : "Dry-run plan (strategy=\(strategy.rawValue)) — nothing written:"
-            statusText = header + "\n" + outcome.output
+            if !write {
+                showToast(.init(
+                    text: "Dry run (\(strategy.rawValue)) — nothing was written",
+                    detail: outcome.output.trimmingCharacters(in: .whitespacesAndNewlines),
+                    style: .info
+                ))
+            }
             if write {
                 lastAppliedAt = Date()
                 // The staged rows are gone from the database now, so drop them from the library
@@ -94,10 +102,52 @@ final class StudioModel {
                                 style: .success))
             }
         } catch {
-            statusText = (write ? "Apply failed: " : "Plan failed: ") + error.localizedDescription
-            if write { showToast(.init(text: "Apply failed", style: .error, action: .retryApply)) }
+            report(error, during: write ? .applying : .planning, retry: write ? .retryApply : nil)
         }
         isBusy = false
+    }
+
+    // MARK: - Failure reporting
+
+    /// Rows that would make Apply fail, in library order. Empty means Apply is safe to attempt.
+    var applyBlockers: [ReplacementApplyBlocker] {
+        ReplacementApplyPreflight().blockers(in: replacements)
+    }
+
+    /// Show the blocking rows if there are any. Returns whether Apply was blocked, so callers can
+    /// skip the destructive confirmation dialog for something that was never going to be written.
+    @discardableResult
+    func reportApplyBlockers() -> Bool {
+        let preflight = ReplacementApplyPreflight()
+        let blockers = preflight.blockers(in: replacements)
+        guard !blockers.isEmpty else { return false }
+
+        let explanation = preflight.explanation(for: blockers)
+        showToast(.init(
+            text: explanation.summary,
+            detail: explanation.body,
+            style: .error,
+            // Jumping to the first offending row beats a Retry that would fail identically.
+            action: blockers.first?.replacementID.map { ToastMessage.Action.reveal($0) }
+        ))
+        return true
+    }
+
+    /// Translate a thrown error into something worth reading, and record the technical text.
+    private func report(
+        _ error: Error,
+        during operation: ReplacementFailureExplainer.Operation,
+        retry: ToastMessage.Action?
+    ) {
+        let explanation = ReplacementFailureExplainer.explain(error, during: operation)
+        lastFailureDetail = explanation.rawDetail
+        showToast(.init(
+            text: explanation.summary,
+            detail: explanation.body,
+            style: .error,
+            action: retry,
+            copyableDetail: explanation.rawDetail
+        ))
     }
 
     // MARK: - Editing
@@ -324,16 +374,35 @@ struct GroupSummary: Identifiable, Hashable {
 
 struct ToastMessage: Identifiable, Equatable {
     enum Style { case success, error, info }
-    enum Action: Equatable { case retryApply, retryImport }
+    enum Action: Equatable {
+        case retryApply
+        case retryImport
+        /// Select the row a failure named, so "which one?" is one click away.
+        case reveal(Replacement.ID)
+    }
+
     let id = UUID()
+    /// The headline — what happened, in one line.
     var text: String
+    /// Why it happened and what to do about it. Errors should always carry one.
+    var detail: String?
     var style: Style
     var action: Action?
+    /// Unedited technical text, offered as a secondary Copy Details button when present.
+    var copyableDetail: String?
 
-    init(text: String, style: Style, action: Action? = nil) {
+    init(
+        text: String,
+        detail: String? = nil,
+        style: Style,
+        action: Action? = nil,
+        copyableDetail: String? = nil
+    ) {
         self.text = text
+        self.detail = detail
         self.style = style
         self.action = action
+        self.copyableDetail = copyableDetail
     }
 }
 

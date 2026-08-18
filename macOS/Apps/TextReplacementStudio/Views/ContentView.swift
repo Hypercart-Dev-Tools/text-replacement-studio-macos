@@ -101,7 +101,7 @@ struct ContentView: View {
             guard let id = selectedReplacementID, let row = model.replacement(id) else { return }
             row.isPendingDeletion ? model.restoreReplacement(id) : model.deleteReplacement(id)
         })
-        .focusedValue(\.applyToMacOS, canApply ? { confirmApply = true } : nil)
+        .focusedValue(\.applyToMacOS, canApply ? requestApply : nil)
         .overlay(alignment: .bottom) { toastOverlay }
         .task {
             if model.replacements.isEmpty { await model.importFromMacOS() }
@@ -112,7 +112,7 @@ struct ContentView: View {
             PreviewPlanSheet(
                 model: model,
                 strategy: model.strategy,
-                onApply: { showPreview = false; confirmApply = true },
+                onApply: { showPreview = false; requestApply() },
                 onCancel: { showPreview = false }
             )
         }
@@ -159,7 +159,7 @@ struct ContentView: View {
                 .disabled(!model.hasImported)
                 .help("See what Apply would change — writes nothing.")
 
-            Button("Apply to macOS…") { confirmApply = true }
+            Button("Apply to macOS…") { requestApply() }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(!canApply)
@@ -176,8 +176,9 @@ struct ContentView: View {
                 onAction: { action in
                     withAnimation(Theme.spring) { model.toast = nil }
                     switch action {
-                    case .retryApply:  confirmApply = true
+                    case .retryApply:  requestApply()
                     case .retryImport: Task { await model.importFromMacOS() }
+                    case .reveal(let id): reveal(id)
                     }
                 },
                 onDismiss: { withAnimation(Theme.spring) { model.toast = nil } }
@@ -192,6 +193,26 @@ struct ContentView: View {
         if model.toast?.id == toast.id {
             withAnimation(Theme.spring) { model.toast = nil }
         }
+    }
+
+    // MARK: Apply
+
+    /// Ask to apply. Incomplete rows are reported here rather than after the confirmation, so the
+    /// user is never walked through a destructive "write to your live database?" dialog for a batch
+    /// macOS was always going to reject.
+    private func requestApply() {
+        guard !model.reportApplyBlockers() else { return }
+        confirmApply = true
+    }
+
+    /// Select the row a failure named and make sure it is actually on screen — the active filter
+    /// or search may be hiding it, which would make "Show Me" appear to do nothing.
+    private func reveal(_ id: Replacement.ID) {
+        searchText = ""
+        if model.filtered(selectedFilter, search: "").contains(where: { $0.id == id }) == false {
+            selectedFilter = .all
+        }
+        selectedReplacementID = id
     }
 
     // MARK: New replacement
