@@ -1,3 +1,5 @@
+<img width="2112" height="1456" alt="CleanShot 2026-08-17 at 19 12 04@2x" src="https://github.com/user-attachments/assets/5b5bbad6-d210-4bb5-bc85-c7bb04316e2d" />
+
 # Fast Key Replacement (macOS)
 
 Tools for working with Apple's text-replacement data on macOS:
