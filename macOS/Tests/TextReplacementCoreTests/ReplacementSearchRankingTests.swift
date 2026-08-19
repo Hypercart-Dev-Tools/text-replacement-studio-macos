@@ -47,4 +47,46 @@ struct ReplacementSearchRankingTests {
     @Test func noMatchesReturnsEmpty() {
         #expect(library.matchingSearch("zzz-no-such-query").isEmpty)
     }
+
+    /// Regression: searching "what" used to surface phrase-only matches (any replacement whose long
+    /// phrase happened to contain the common word "what") ahead of "~where" — a shortcut that shares
+    /// no substring with "what" but is a much closer match by prefix ("wh"). Prefix closeness on the
+    /// shortcut must now outrank an unrelated phrase hit.
+    @Test func closePrefixShortcutRanksAheadOfUnrelatedPhraseMatch() {
+        let library: [Replacement] = [
+            Replacement(shortcut: "~360C", phrase: "A long template that happens to mention what to do next."),
+            Replacement(shortcut: "/upworkdev", phrase: "Do you use GitHub already? What's your workflow like."),
+            Replacement(shortcut: "~where", phrase: "Location-only shortcut, no relation to the query word."),
+            Replacement(shortcut: "~commit", phrase: "No relation at all."),
+        ]
+
+        let ranked = library.matchingSearch("what")
+
+        #expect(ranked.count == 3)
+        #expect(!ranked.contains { $0.shortcut == "~commit" })
+        #expect(ranked.first?.shortcut == "~where")
+        #expect(ranked.dropFirst().map(\.shortcut) == ["~360C", "/upworkdev"])
+    }
+
+    @Test func exactAndPrefixShortcutMatchesOutrankCloseMatch() {
+        let library: [Replacement] = [
+            Replacement(shortcut: "~where", phrase: "n/a"),
+            Replacement(shortcut: "~what", phrase: "n/a"),
+            Replacement(shortcut: "~whatever", phrase: "n/a"),
+        ]
+
+        let ranked = library.matchingSearch("what")
+
+        // Exact match, then prefix match, then the merely-close "where".
+        #expect(ranked.map(\.shortcut) == ["~what", "~whatever", "~where"])
+    }
+
+    @Test func leadingPunctuationIsIgnoredWhenComparingShortcuts() {
+        let library: [Replacement] = [
+            Replacement(shortcut: "+what", phrase: "n/a"),
+            Replacement(shortcut: "!what", phrase: "n/a"),
+        ]
+
+        #expect(library.matchingSearch("what").count == 2)
+    }
 }

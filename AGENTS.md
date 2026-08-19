@@ -14,6 +14,33 @@ text-replacement data:
 - `macOS/Tests` — XCTest suites.
 - `scripts/*.py` — JSON ⇄ Markdown ⇄ Apple SQLite ⇄ native-plist conversion + linting.
 
+## Building and running the app
+
+`swift build` only refreshes `.build/` — it does **not** touch the installed
+app. The user launches `/Applications/Text Replacement Studio.app`, a separate
+bundle assembled and code-signed by `macOS/make-app.sh`. So "rebuild the app" /
+"rebuild the local app" means:
+
+```sh
+cd macOS && ./make-app.sh
+```
+
+This does a release build, reassembles the `.app`, ad-hoc signs it, and
+reinstalls it to `/Applications`, replacing the stale copy. `swift build`
+alone will leave the user looking at old behavior even after a successful
+compile.
+
+## UI behavior notes (non-obvious, not derivable from a diff)
+
+- **⌘Z on a still-blank replacement deletes it.** In
+  `ReplacementDetailEditor.swift`, a hidden button bound to ⌘Z calls
+  `model.deleteReplacement(id)`, but only while the shortcut *and* phrase
+  fields are both empty (`undoDeletesBlankRow`). Standard Undo is already a
+  no-op on an untouched field, so this repurposes that dead keystroke to let
+  someone back out of "+ Add" without hunting for the trash icon. The moment
+  either field has content, the button disables itself and ⌘Z falls back to
+  normal per-field text undo.
+
 ## Code intelligence: ask-self, if it's set up (optional)
 
 This repo can optionally be indexed with **ask-self**, an external, repo-grounded

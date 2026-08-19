@@ -139,6 +139,14 @@ struct ContentView: View {
             }
 
             Button {
+                newReplacement()
+            } label: {
+                Label("Add", systemImage: "plus")
+            }
+            .controlSize(.large)
+            .help("Add a new replacement.")
+
+            Button {
                 Task { await model.importFromMacOS() }
             } label: {
                 Label("Import", systemImage: "square.and.arrow.down")

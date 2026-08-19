@@ -17,28 +17,32 @@ struct ReplacementDetailEditor: View {
     var body: some View {
         if let id = replacementID, let row = model.replacement(id) {
             let issues = model.issues(for: id)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if row.isPendingDeletion { pendingDeletionBanner(id) }
-                    Group {
-                        header(id, issues: issues.filter { $0.code.hasPrefix("shortcut") })
-                        Spacer().frame(height: 26)
-                        phraseSection(id, issues: issues.filter { $0.code.hasPrefix("phrase") })
-                        Spacer().frame(height: 18)
-                        groupRow(id)
-                        notesRow(id)
-                    }
-                    .disabled(row.isPendingDeletion)
+            ZStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if row.isPendingDeletion { pendingDeletionBanner(id) }
+                        Group {
+                            header(id, issues: issues.filter { $0.code.hasPrefix("shortcut") })
+                            Spacer().frame(height: 26)
+                            phraseSection(id, issues: issues.filter { $0.code.hasPrefix("phrase") })
+                            Spacer().frame(height: 18)
+                            groupRow(id)
+                            notesRow(id)
+                        }
+                        .disabled(row.isPendingDeletion)
 
-                    if !row.isPendingDeletion { deleteRow(id) }
+                        if !row.isPendingDeletion { deleteRow(id) }
+                    }
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 26)
                 }
-                .padding(.horizontal, 32)
-                .padding(.vertical, 26)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.window)
+                .onChange(of: replacementID) { focusIfBlank(); copied = false }
+                .onAppear { focusIfBlank() }
+
+                undoDeletesBlankRow(id, row)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.window)
-            .onChange(of: replacementID) { focusIfBlank(); copied = false }
-            .onAppear { focusIfBlank() }
         } else {
             emptyState
         }
@@ -234,6 +238,20 @@ struct ReplacementDetailEditor: View {
                 .foregroundStyle(Theme.text3)
         }
         .padding(.top, 22)
+    }
+
+    /// ⌘Z on a row whose shortcut and phrase are *both* still empty deletes it outright, instead of
+    /// doing nothing. There is no text to undo at that point anyway (standard Undo is already inert
+    /// for an untouched field), so this repurposes the no-op keystroke as a way to back out of
+    /// "+ Add" without hunting for the trash icon. Disabled the moment either field has content, so
+    /// normal per-field text undo takes over as soon as there's something to undo.
+    private func undoDeletesBlankRow(_ id: Replacement.ID, _ row: Replacement) -> some View {
+        Button("", action: { model.deleteReplacement(id) })
+            .keyboardShortcut("z", modifiers: .command)
+            .disabled(!(row.shortcut.isEmpty && row.phrase.isEmpty))
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
     }
 
     // MARK: Notes
